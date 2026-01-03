@@ -1,0 +1,58 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model PDF {
+  id         String     @id @default(cuid())
+  filename   String
+  filepath   String
+  uploadedAt DateTime   @default(now())
+  highlights Highlight[]
+
+  @@index([id])
+}
+
+model Highlight {
+  id             String       @id @default(cuid())
+  pdfId          String
+  pageNumber     Int
+  selectionRanges String      // JSON string storing coordinates for highlight positioning
+  selectedText   String
+  createdAt      DateTime     @default(now())
+  pdf            PDF          @relation(fields: [pdfId], references: [id], onDelete: Cascade)
+  conversation   Conversation?
+
+  @@index([pdfId])
+  @@index([id])
+}
+
+model Conversation {
+  id         String    @id @default(cuid())
+  highlightId String   @unique
+  createdAt  DateTime  @default(now())
+  highlight  Highlight @relation(fields: [highlightId], references: [id], onDelete: Cascade)
+  messages   Message[]
+
+  @@index([highlightId])
+  @@index([id])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  role           String       // "user" or "assistant"
+  content        String
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([id])
+}
