@@ -83,4 +83,3 @@ paper-reader/
 - Database is stored as `dev.db` (SQLite)
 - All data persists locally
 - For production deployment, ensure proper file storage and database configuration
-
