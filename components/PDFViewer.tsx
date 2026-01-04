@@ -140,21 +140,12 @@ const PDFViewer = memo(function PDFViewer({
         e.preventDefault();
         zoomOut();
       }
-      // Page navigation (only when not typing in an input)
-      else if (e.target === document.body || (e.target as HTMLElement).tagName !== 'INPUT') {
-        if (e.key === 'ArrowLeft' && pageNumber > 1) {
-          e.preventDefault();
-          setPageNumber((p) => p - 1);
-        } else if (e.key === 'ArrowRight' && pageNumber < numPages) {
-          e.preventDefault();
-          setPageNumber((p) => p + 1);
-        }
-      }
+      // Arrow keys disabled for continuous scroll mode
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [zoomIn, zoomOut, pageNumber, numPages]);
+  }, [zoomIn, zoomOut]);
 
   // Format zoom percentage for display
   const zoomPercentage = Math.round(scale * 100);
@@ -180,13 +171,28 @@ const PDFViewer = memo(function PDFViewer({
     const pageElement = range.commonAncestorContainer.parentElement?.closest('.react-pdf__Page');
     if (!pageElement) return;
 
-    // Get page number from data attribute or by finding which page contains the selection
+    // Extract page number from data-page-number attribute or find it
+    let pageNum = 1;
+    const pageNumberAttr = pageElement.getAttribute('data-page-number');
+    if (pageNumberAttr) {
+      pageNum = parseInt(pageNumberAttr, 10);
+    } else {
+      // Fallback: find page number by checking all pages
+      const allPages = document.querySelectorAll('.react-pdf__Page');
+      for (let i = 0; i < allPages.length; i++) {
+        if (allPages[i].contains(pageElement)) {
+          pageNum = i + 1;
+          break;
+        }
+      }
+    }
+
     const pageRect = pageElement.getBoundingClientRect();
     const selectionRect = range.getBoundingClientRect();
 
     // Calculate relative coordinates (normalized to 100% scale for storage)
     const ranges = {
-      page: pageNumber,
+      page: pageNum,
       startX: (selectionRect.left - pageRect.left) / scale,
       startY: (selectionRect.top - pageRect.top) / scale,
       endX: (selectionRect.right - pageRect.left) / scale,
@@ -198,26 +204,24 @@ const PDFViewer = memo(function PDFViewer({
     setSelectedText(text);
     setSelectionRanges(ranges);
     onTextSelect(text, ranges);
-  }, [pageNumber, onTextSelect]);
+  }, [scale, onTextSelect]);
 
-  // Parse highlights for current page
-  const pageHighlights = highlights
-    .filter((h) => h.pageNumber === pageNumber)
-    .map((h) => {
-      try {
-        return {
-          ...h,
-          ranges: JSON.parse(h.selectionRanges),
-        };
-      } catch {
-        return null;
+  // Parse all highlights grouped by page
+  const highlightsByPage = highlights.reduce((acc, h) => {
+    try {
+      const ranges = JSON.parse(h.selectionRanges);
+      if (!acc[h.pageNumber]) {
+        acc[h.pageNumber] = [];
       }
-    })
-    .filter(Boolean) as Array<{
-      id: string;
-      ranges: any;
-      selectedText: string;
-    }>;
+      acc[h.pageNumber].push({
+        ...h,
+        ranges,
+      });
+    } catch {
+      // Skip invalid highlights
+    }
+    return acc;
+  }, {} as Record<number, Array<{ id: string; ranges: any; selectedText: string }>>);
 
   return (
     <div className="flex flex-col w-full h-full">
@@ -226,7 +230,7 @@ const PDFViewer = memo(function PDFViewer({
         {/* Left: Paper Title */}
         <div className="flex-1 min-w-0">
           <h2 className="text-lg font-medium text-gray-900 truncate">
-            {filename || 'Document'}
+            {extractedTitle}
           </h2>
         </div>
 
@@ -312,45 +316,56 @@ const PDFViewer = memo(function PDFViewer({
         </div>
       </div>
 
-      {/* PDF Viewer Area */}
+      {/* PDF Viewer Area - Continuous Scroll */}
       <div className="flex-1 overflow-auto bg-gray-50">
-        <div className="flex justify-center py-8">
-          <div
-            className="relative bg-white shadow-lg"
-            onMouseUp={handleTextSelection}
+        <div className="flex flex-col items-center py-8">
+          <Document
+            file={file}
+            onLoadSuccess={onDocumentLoadSuccess}
+            loading={<div className="p-8">Loading PDF...</div>}
           >
-            <Document
-              file={file}
-              onLoadSuccess={onDocumentLoadSuccess}
-              loading={<div className="p-8">Loading PDF...</div>}
-            >
-              <div className="relative">
-                <Page
-                  pageNumber={pageNumber}
-                  scale={scale}
-                  renderTextLayer={true}
-                  renderAnnotationLayer={true}
-                />
-                {/* Highlight overlays for this page - positioned absolutely over the page */}
-                <div className="absolute inset-0 pointer-events-none">
-                  {pageHighlights.map((highlight) => (
-                    <div
-                      key={highlight.id}
-                      onClick={() => onHighlightClick(highlight.id)}
-                      className="absolute cursor-pointer hover:bg-gray-400 bg-gray-300 bg-opacity-30 transition-opacity pointer-events-auto"
-                      style={{
-                        left: `${highlight.ranges.startX * scale}px`,
-                        top: `${highlight.ranges.startY * scale}px`,
-                        width: `${Math.max(highlight.ranges.endX - highlight.ranges.startX, 10) * scale}px`,
-                        height: `${Math.max(highlight.ranges.endY - highlight.ranges.startY, 10) * scale}px`,
-                      }}
-                      title="Click to reopen conversation"
+            {Array.from(new Array(numPages), (el, index) => {
+              const pageNum = index + 1;
+              const pageHighlights = highlightsByPage[pageNum] || [];
+              
+              return (
+                <div
+                  key={`page_${pageNum}`}
+                  className="mb-8 flex justify-center"
+                  onMouseUp={handleTextSelection}
+                >
+                  <div className="relative bg-white shadow-lg">
+                    <Page
+                      pageNumber={pageNum}
+                      scale={scale}
+                      renderTextLayer={true}
+                      renderAnnotationLayer={true}
+                      data-page-number={pageNum}
                     />
-                  ))}
+                    {/* Highlight overlays for this page */}
+                    {pageHighlights.length > 0 && (
+                      <div className="absolute inset-0 pointer-events-none">
+                        {pageHighlights.map((highlight) => (
+                          <div
+                            key={highlight.id}
+                            onClick={() => onHighlightClick(highlight.id)}
+                            className="absolute cursor-pointer hover:bg-gray-400 bg-gray-300 bg-opacity-30 transition-opacity pointer-events-auto"
+                            style={{
+                              left: `${highlight.ranges.startX * scale}px`,
+                              top: `${highlight.ranges.startY * scale}px`,
+                              width: `${Math.max(highlight.ranges.endX - highlight.ranges.startX, 10) * scale}px`,
+                              height: `${Math.max(highlight.ranges.endY - highlight.ranges.startY, 10) * scale}px`,
+                            }}
+                            title="Click to reopen conversation"
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </Document>
-          </div>
+              );
+            })}
+          </Document>
         </div>
       </div>
     </div>

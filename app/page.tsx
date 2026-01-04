@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import SelectionPopup from '@/components/SelectionPopup';
 import ChatOverlay from '@/components/ChatOverlay';
 
@@ -313,9 +314,34 @@ export default function Home() {
   }, [highlights, currentHighlightId]);
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6">AI Paper Reader</h1>
+    <main className="min-h-screen bg-gray-50">
+      {/* Top Bar with List Button */}
+      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-6 py-3 flex justify-end">
+        <Link
+          href="/papers"
+          className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 transition-colors"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-5 w-5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+            />
+          </svg>
+          <span>List of Papers</span>
+        </Link>
+      </div>
+
+      <div className="p-4">
+        <div className="max-w-7xl mx-auto">
+          <h1 className="text-3xl font-bold mb-6">AI Paper Reader</h1>
 
         {/* Error Display */}
         {error && (
@@ -375,9 +401,10 @@ export default function Home() {
 
         {/* PDF Viewer */}
         {selectedPdf && (
-          <div className="bg-white rounded-lg shadow-lg p-4">
+          <div className="bg-white rounded-lg shadow-lg overflow-hidden" style={{ height: 'calc(100vh - 200px)' }}>
             <PDFViewer
               file={`/api/files/${selectedPdf.filepath}`}
+              filename={selectedPdf.filename}
               onTextSelect={handleTextSelect}
               highlights={highlights}
               onHighlightClick={handleHighlightClick}
@@ -407,6 +434,7 @@ export default function Home() {
           initialMessages={currentMessages}
           onSendMessage={handleSendMessage}
         />
+        </div>
       </div>
     </main>
   );
