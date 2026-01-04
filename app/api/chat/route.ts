@@ -181,13 +181,25 @@ export async function POST(request: NextRequest) {
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
       async start(controller) {
+        // #region agent log
+        appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:stream-start',message:'stream start',data:{conversationId:conversation.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})+'\n').catch(()=>{});
+        // #endregion
         try {
           let fullResponse = '';
+          let chunkCount = 0;
           for await (const chunk of stream) {
+            chunkCount++;
             const chunkText = chunk.text();
             fullResponse += chunkText;
+            // #region agent log
+            if (chunkCount <= 3) appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:stream-chunk',message:'streaming chunk',data:{chunkCount,chunkLength:chunkText.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})+'\n').catch(()=>{});
+            // #endregion
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: chunkText })}\n\n`));
           }
+
+          // #region agent log
+          appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:stream-done',message:'stream complete',data:{totalChunks:chunkCount,responseLength:fullResponse.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})+'\n').catch(()=>{});
+          // #endregion
 
           // Save assistant message after streaming completes
           await db.message.create({
@@ -201,8 +213,13 @@ export async function POST(request: NextRequest) {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, conversationId: conversation.id })}\n\n`));
           controller.close();
         } catch (error) {
+          // #region agent log
+          appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:stream-error',message:'stream error caught',data:{errorMessage:error instanceof Error?error.message:String(error),errorName:error instanceof Error?error.name:'unknown'},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})+'\n').catch(()=>{});
+          // #endregion
           console.error('Error streaming response:', error);
-          controller.error(error);
+          // Send error to client before closing
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: error instanceof Error ? error.message : 'Stream error' })}\n\n`));
+          controller.close();
         }
       },
     });

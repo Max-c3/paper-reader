@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import SelectionPopup from '@/components/SelectionPopup';
-import ChatOverlay from '@/components/ChatOverlay';
+import ChatPanel from '@/components/ChatOverlay';
 
 // Import polyfill
 import '@/lib/polyfills';
@@ -52,6 +52,11 @@ export default function Home() {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoadingHighlights, setIsLoadingHighlights] = useState(false);
+  
+  // Split panel state
+  const [splitRatio, setSplitRatio] = useState(60); // PDF takes 60% by default
+  const [isDragging, setIsDragging] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Load PDFs on mount
   useEffect(() => {
@@ -197,23 +202,14 @@ export default function Home() {
   };
 
   const handleHighlightClick = useCallback((highlightId: string) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:198',message:'handleHighlightClick entry',data:{highlightId,highlightsCount:highlights.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     // Instant access from preloaded data
     const highlight = highlights.find((h) => h.id === highlightId);
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:201',message:'highlight lookup result',data:{found:!!highlight,highlightId:highlight?.id,conversationId:highlight?.conversation?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     if (!highlight) return;
 
     setSelectedText(highlight.selectedText);
     setCurrentHighlightId(highlightId);
     setCurrentConversationId(highlight.conversation?.id || null);
     setShowChat(true);
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:207',message:'handleHighlightClick exit',data:{setHighlightId:highlightId,setConversationId:highlight.conversation?.id||null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
   }, [highlights]);
 
   const handleSendMessage = async (
@@ -221,12 +217,9 @@ export default function Home() {
     onStreamChunk: (text: string) => void
   ) => {
     // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:209',message:'handleSendMessage entry',data:{currentHighlightId,conversationId:currentConversationId,messageLength:message.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:handleSendMessage-entry',message:'handleSendMessage called',data:{currentHighlightId,currentConversationId,messageLength:message.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
     // #endregion
     if (!currentHighlightId) {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:213',message:'early return - no highlightId',data:{currentHighlightId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       return;
     }
 
@@ -237,29 +230,20 @@ export default function Home() {
         conversationId: currentConversationId,
       };
       // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:220',message:'before fetch request',data:{requestBody},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:before-fetch',message:'about to call /api/chat',data:{requestBody},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
       // #endregion
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
       });
-
       // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:227',message:'after fetch - response status',data:{status:res.status,statusText:res.statusText,ok:res.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:after-fetch',message:'fetch response received',data:{status:res.status,ok:res.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
       // #endregion
+
       if (!res.ok) {
-        // #region agent log
-        let errorData;
-        try {
-          errorData = await res.json();
-        } catch {
-          errorData = { error: await res.text().catch(() => 'Failed to send message') };
-        }
-        fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:230',message:'response not ok - error details',data:{status:res.status,statusText:res.statusText,errorData},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
-        const errorMessage = errorData?.error || 'Failed to send message';
-        throw new Error(errorMessage);
+        const errorData = await res.json().catch(() => ({ error: 'Failed to send message' }));
+        throw new Error(errorData?.error || 'Failed to send message');
       }
 
       // Handle streaming response
@@ -267,17 +251,30 @@ export default function Home() {
       const decoder = new TextDecoder();
 
       if (reader) {
+        let chunkCount = 0;
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            // #region agent log
+            fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:stream-done',message:'stream finished',data:{totalChunks:chunkCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
+            break;
+          }
 
           const chunk = decoder.decode(value);
           const lines = chunk.split('\n');
+          chunkCount++;
 
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               try {
                 const data = JSON.parse(line.slice(6));
+                if (data.error) {
+                  // #region agent log
+                  fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:stream-error',message:'error in stream',data:{error:data.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
+                  // #endregion
+                  throw new Error(data.error);
+                }
                 if (data.text) {
                   onStreamChunk(data.text);
                 }
@@ -289,13 +286,21 @@ export default function Home() {
                   }
                 }
               } catch (e) {
-                // Ignore parse errors
+                // #region agent log
+                if (e instanceof Error && e.message !== 'Unexpected end of JSON input') {
+                  fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:parse-error',message:'JSON parse error in stream',data:{line,error:e.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})}).catch(()=>{});
+                  throw e; // Re-throw if it's not just a parse error
+                }
+                // #endregion
               }
             }
           }
         }
       }
     } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:catch-error',message:'error caught in handleSendMessage',data:{error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       console.error('Error sending message:', error);
       throw error;
     }
@@ -312,6 +317,42 @@ export default function Home() {
       content: msg.content,
     }));
   }, [highlights, currentHighlightId]);
+
+  // Resizer drag handlers
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging || !containerRef.current) return;
+      
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const newRatio = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+      
+      // Clamp between 30% and 80%
+      setSplitRatio(Math.max(30, Math.min(80, newRatio)));
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isDragging]);
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -399,16 +440,64 @@ export default function Home() {
           </div>
         </div>
 
-        {/* PDF Viewer */}
+        {/* PDF Viewer and Chat Panel Container */}
         {selectedPdf && (
-          <div className="bg-white rounded-lg shadow-lg overflow-hidden" style={{ height: 'calc(100vh - 200px)' }}>
-            <PDFViewer
-              file={`/api/files/${selectedPdf.filepath}`}
-              filename={selectedPdf.filename}
-              onTextSelect={handleTextSelect}
-              highlights={highlights}
-              onHighlightClick={handleHighlightClick}
-            />
+          <div 
+            ref={containerRef}
+            className="flex gap-0 rounded-lg overflow-hidden"
+            style={{ height: 'calc(100vh - 200px)' }}
+          >
+            {/* PDF Viewer */}
+            <div 
+              className="bg-white shadow-lg overflow-hidden rounded-lg transition-all duration-300 ease-out"
+              style={{ width: showChat ? `${splitRatio}%` : '100%' }}
+            >
+              <PDFViewer
+                file={`/api/files/${selectedPdf.filepath}`}
+                filename={selectedPdf.filename}
+                onTextSelect={handleTextSelect}
+                highlights={highlights}
+                onHighlightClick={handleHighlightClick}
+              />
+            </div>
+
+            {/* Resizer */}
+            {showChat && (
+              <div
+                onMouseDown={handleMouseDown}
+                className={`w-2 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${
+                  isDragging ? 'bg-slate-300' : 'bg-transparent hover:bg-slate-200'
+                }`}
+              >
+                <div className={`w-1 h-16 rounded-full transition-colors ${
+                  isDragging ? 'bg-slate-500' : 'bg-slate-300 group-hover:bg-slate-400'
+                }`} />
+              </div>
+            )}
+
+            {/* Chat Panel */}
+            <div 
+              className={`overflow-hidden transition-all duration-300 ease-out ${
+                showChat ? 'opacity-100' : 'opacity-0 w-0'
+              }`}
+              style={{ 
+                width: showChat ? `calc(${100 - splitRatio}% - 8px)` : '0',
+                marginLeft: showChat ? '8px' : '0',
+                marginRight: showChat ? '4px' : '0',
+              }}
+            >
+              <ChatPanel
+                isOpen={showChat}
+                onClose={() => {
+                  setShowChat(false);
+                  setSelectedText('');
+                }}
+                highlightedText={selectedText}
+                conversationId={currentConversationId || undefined}
+                initialMessages={currentMessages}
+                onSendMessage={handleSendMessage}
+              />
+            </div>
           </div>
         )}
 
@@ -421,19 +510,6 @@ export default function Home() {
             onClose={() => setShowPopup(false)}
           />
         )}
-
-        {/* Chat Overlay */}
-        <ChatOverlay
-          isOpen={showChat}
-          onClose={() => {
-            setShowChat(false);
-            setSelectedText('');
-          }}
-          highlightedText={selectedText}
-          conversationId={currentConversationId || undefined}
-          initialMessages={currentMessages}
-          onSendMessage={handleSendMessage}
-        />
         </div>
       </div>
     </main>
