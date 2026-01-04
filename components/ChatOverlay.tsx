@@ -78,11 +78,12 @@ export default function ChatOverlay({
       await onSendMessage(messageToSend, onStreamChunk);
     } catch (error) {
       console.error('Error sending message:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Sorry, an error occurred. Please try again.';
       setMessages((prev) => {
         const newMessages = [...prev];
         newMessages[newMessages.length - 1] = {
           role: 'assistant',
-          content: 'Sorry, an error occurred. Please try again.',
+          content: errorMessage,
         };
         return newMessages;
       });

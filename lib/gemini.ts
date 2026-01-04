@@ -1,14 +1,23 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-if (!process.env.GEMINI_API_KEY) {
-  throw new Error('GEMINI_API_KEY is not set in environment variables');
-}
+const getApiKey = () => {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    throw new Error('GEMINI_API_KEY is not set in environment variables');
+  }
+  return key;
+};
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const genAI = process.env.GEMINI_API_KEY 
+  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+  : null;
 
 // Use Gemini 3 Pro if available, fallback to latest stable
 // Note: Model names may vary - check Google AI Studio for latest model names
 export const getGeminiModel = () => {
+  if (!genAI) {
+    throw new Error('GEMINI_API_KEY is not set in environment variables');
+  }
   // Try Gemini 3 Pro first (adjust model name based on actual availability)
   // Common model names: 'gemini-3-pro', 'gemini-2.0-flash-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'
   const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-pro';

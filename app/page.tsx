@@ -196,35 +196,69 @@ export default function Home() {
   };
 
   const handleHighlightClick = useCallback((highlightId: string) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:198',message:'handleHighlightClick entry',data:{highlightId,highlightsCount:highlights.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     // Instant access from preloaded data
     const highlight = highlights.find((h) => h.id === highlightId);
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:201',message:'highlight lookup result',data:{found:!!highlight,highlightId:highlight?.id,conversationId:highlight?.conversation?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     if (!highlight) return;
 
     setSelectedText(highlight.selectedText);
     setCurrentHighlightId(highlightId);
     setCurrentConversationId(highlight.conversation?.id || null);
     setShowChat(true);
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:207',message:'handleHighlightClick exit',data:{setHighlightId:highlightId,setConversationId:highlight.conversation?.id||null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
   }, [highlights]);
 
   const handleSendMessage = async (
     message: string,
     onStreamChunk: (text: string) => void
   ) => {
-    if (!currentHighlightId) return;
+    // #region agent log
+    fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:209',message:'handleSendMessage entry',data:{currentHighlightId,conversationId:currentConversationId,messageLength:message.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+    if (!currentHighlightId) {
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:213',message:'early return - no highlightId',data:{currentHighlightId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      return;
+    }
 
     try {
+      const requestBody = {
+        highlightId: currentHighlightId,
+        message,
+        conversationId: currentConversationId,
+      };
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:220',message:'before fetch request',data:{requestBody},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          highlightId: currentHighlightId,
-          message,
-          conversationId: currentConversationId,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:227',message:'after fetch - response status',data:{status:res.status,statusText:res.statusText,ok:res.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       if (!res.ok) {
-        throw new Error('Failed to send message');
+        // #region agent log
+        let errorData;
+        try {
+          errorData = await res.json();
+        } catch {
+          errorData = { error: await res.text().catch(() => 'Failed to send message') };
+        }
+        fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'app/page.tsx:230',message:'response not ok - error details',data:{status:res.status,statusText:res.statusText,errorData},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        const errorMessage = errorData?.error || 'Failed to send message';
+        throw new Error(errorMessage);
       }
 
       // Handle streaming response

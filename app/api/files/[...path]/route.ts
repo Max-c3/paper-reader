@@ -5,9 +5,10 @@ import { existsSync } from 'fs';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> }
 ) {
   try {
+    const params = await context.params;
     const filePath = join(process.cwd(), ...params.path);
     
     // Security: Only allow files from uploads directory

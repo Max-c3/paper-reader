@@ -4,10 +4,8 @@ const nextConfig = {
     config.resolve.alias.canvas = false;
     return config;
   },
-  // Ensure polyfills are loaded
-  experimental: {
-    serverComponentsExternalPackages: ['pdfjs-dist'],
-  },
+  // External packages for server components
+  serverExternalPackages: ['pdfjs-dist'],
 };
 
 module.exports = nextConfig;
