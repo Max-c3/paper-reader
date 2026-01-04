@@ -2,8 +2,8 @@
 
 import { useState, useCallback, memo, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
-import 'react-pdf/dist/esm/Page/TextLayer.css';
+import 'react-pdf/dist/Page/AnnotationLayer.css';
+import 'react-pdf/dist/Page/TextLayer.css';
 
 // Polyfill for Promise.withResolvers (Node.js 18 compatibility)
 if (typeof Promise.withResolvers === 'undefined') {
@@ -35,6 +35,7 @@ interface PDFViewerProps {
     selectedText: string;
   }>;
   onHighlightClick: (highlightId: string) => void;
+  onHighlightDelete?: (highlightId: string) => void;
   onTitleExtracted?: (title: string) => void;
 }
 
@@ -44,6 +45,7 @@ const PDFViewer = memo(function PDFViewer({
   onTextSelect,
   highlights,
   onHighlightClick,
+  onHighlightDelete,
   onTitleExtracted,
 }: PDFViewerProps) {
   const [numPages, setNumPages] = useState<number>(0);
@@ -344,20 +346,52 @@ const PDFViewer = memo(function PDFViewer({
                     />
                     {/* Highlight overlays for this page */}
                     {pageHighlights.length > 0 && (
-                      <div className="absolute inset-0 pointer-events-none">
+                      <div className="absolute inset-0 pointer-events-none z-10">
                         {pageHighlights.map((highlight) => (
                           <div
                             key={highlight.id}
-                            onClick={() => onHighlightClick(highlight.id)}
-                            className="absolute cursor-pointer hover:bg-gray-400 bg-gray-300 bg-opacity-30 transition-opacity pointer-events-auto"
+                            className="absolute pointer-events-auto group"
                             style={{
                               left: `${highlight.ranges.startX * scale}px`,
                               top: `${highlight.ranges.startY * scale}px`,
                               width: `${Math.max(highlight.ranges.endX - highlight.ranges.startX, 10) * scale}px`,
                               height: `${Math.max(highlight.ranges.endY - highlight.ranges.startY, 10) * scale}px`,
                             }}
-                            title="Click to reopen conversation"
-                          />
+                          >
+                            {/* Highlight background */}
+                            <div
+                              onClick={() => onHighlightClick(highlight.id)}
+                              className="absolute inset-0 cursor-pointer bg-gray-300/30 transition-all duration-200 ease-out group-hover:scale-[1.03] group-hover:shadow-[0_0_8px_2px_rgba(147,112,219,0.4),0_0_12px_4px_rgba(236,72,153,0.25),0_0_16px_6px_rgba(59,130,246,0.2)]"
+                              style={{ borderRadius: '3px' }}
+                              title="Click to reopen conversation"
+                            />
+                            {/* Delete button */}
+                            {onHighlightDelete && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onHighlightDelete(highlight.id);
+                                }}
+                                className="absolute -top-2.5 -right-2.5 w-4 h-4 bg-gray-800 hover:bg-gray-900 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-50 transition-opacity duration-150 shadow-md"
+                                title="Delete highlight"
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  className="h-2.5 w-2.5 text-white"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                  strokeWidth={2.5}
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    d="M6 18L18 6M6 6l12 12"
+                                  />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
                         ))}
                       </div>
                     )}

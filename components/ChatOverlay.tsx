@@ -176,7 +176,7 @@ export default function ChatOverlay({
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 chat-scrollbar">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-5 py-4 space-y-4 chat-scrollbar">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
             <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">

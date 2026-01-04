@@ -1,25 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { streamChatResponse, createPDFCache } from '@/lib/gemini';
+import { streamChatResponse, getOrCreateCache } from '@/lib/gemini';
 import { extractPDFText } from '@/lib/pdf-extractor';
-import { appendFile } from 'fs/promises';
-import { join } from 'path';
 
 // POST: Send a message and get streaming response
 export async function POST(request: NextRequest) {
-  // #region agent log
-  appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:6',message:'API route entry',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})+'\n').catch(()=>{});
-  // #endregion
+  const timings: Record<string, number> = {};
+  const startTotal = performance.now();
   
   // Check for API key early
-  // #region agent log
-  const envKeys = Object.keys(process.env).filter(k => k.includes('GEMINI') || k.includes('API'));
-  appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:14',message:'checking GEMINI_API_KEY',data:{hasKey:!!process.env.GEMINI_API_KEY,keyLength:process.env.GEMINI_API_KEY?.length||0,relevantEnvKeys:envKeys},timestamp:Date.now(),sessionId:'debug-session',runId:'env-check',hypothesisId:'E'})+'\n').catch(()=>{});
-  // #endregion
   if (!process.env.GEMINI_API_KEY) {
-    // #region agent log
-    appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:18',message:'GEMINI_API_KEY missing',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'env-check',hypothesisId:'E'})+'\n').catch(()=>{});
-    // #endregion
     return NextResponse.json(
       { error: 'GEMINI_API_KEY is not configured. Please set it in your .env file.' },
       { status: 503 }
@@ -27,69 +17,69 @@ export async function POST(request: NextRequest) {
   }
   
   try {
+    const startParse = performance.now();
     const body = await request.json();
-    // #region agent log
-    appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:9',message:'request body parsed',data:{body,hasHighlightId:!!body.highlightId,hasMessage:!!body.message,hasConversationId:!!body.conversationId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})+'\n').catch(()=>{});
-    // #endregion
     const { highlightId, message, conversationId } = body;
+    timings['1_parse_request'] = performance.now() - startParse;
 
     if (!highlightId || !message) {
-      // #region agent log
-      appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:12',message:'validation failed',data:{highlightId:!!highlightId,message:!!message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})+'\n').catch(()=>{});
-      // #endregion
       return NextResponse.json(
         { error: 'highlightId and message are required' },
         { status: 400 }
       );
     }
 
-    // Get or create conversation
+    // Batch database queries: Get conversation with highlight and PDF in fewer queries
+    const startDb = performance.now();
+    
+    // Get or create conversation with highlight and PDF in optimized queries
     let conversation;
     if (conversationId) {
-      // #region agent log
-      appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:20',message:'looking up conversation by id',data:{conversationId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})+'\n').catch(()=>{});
-      // #endregion
       conversation = await db.conversation.findUnique({
         where: { id: conversationId },
-        include: { highlight: true },
+        include: { 
+          highlight: {
+            include: { pdf: true }
+          },
+          messages: {
+            orderBy: { createdAt: 'asc' }
+          }
+        },
       });
-      // #region agent log
-      appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:25',message:'conversation lookup result',data:{found:!!conversation,conversationId:conversation?.id,hasHighlight:!!conversation?.highlight},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})+'\n').catch(()=>{});
-      // #endregion
     } else {
-      // #region agent log
-      appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:27',message:'no conversationId - checking existing',data:{highlightId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})+'\n').catch(()=>{});
-      // #endregion
       // Check if highlight already has a conversation
       const existingConv = await db.conversation.findUnique({
         where: { highlightId },
-        include: { highlight: true },
+        include: { 
+          highlight: {
+            include: { pdf: true }
+          },
+          messages: {
+            orderBy: { createdAt: 'asc' }
+          }
+        },
       });
-      // #region agent log
-      appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:32',message:'existing conversation check',data:{found:!!existingConv,conversationId:existingConv?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})+'\n').catch(()=>{});
-      // #endregion
 
       if (existingConv) {
         conversation = existingConv;
       } else {
-        // #region agent log
-        appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:36',message:'creating new conversation',data:{highlightId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})+'\n').catch(()=>{});
-        // #endregion
         // Create new conversation
         conversation = await db.conversation.create({
           data: { highlightId },
-          include: { highlight: true },
+          include: { 
+            highlight: {
+              include: { pdf: true }
+            },
+            messages: {
+              orderBy: { createdAt: 'asc' }
+            }
+          },
         });
-        // #region agent log
-        appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:40',message:'conversation created',data:{conversationId:conversation?.id,hasHighlight:!!conversation?.highlight},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})+'\n').catch(()=>{});
-        // #endregion
       }
     }
+    timings['2_db_conversation'] = performance.now() - startDb;
 
     if (!conversation) {
-      // #region agent log
-      appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:43',message:'conversation not found error',data:{highlightId,conversationId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})+'\n').catch(()=>{});
-      // #endregion
       return NextResponse.json(
         { error: 'Conversation not found' },
         { status: 404 }
@@ -97,6 +87,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Save user message
+    const startSaveMsg = performance.now();
     await db.message.create({
       data: {
         conversationId: conversation.id,
@@ -104,22 +95,16 @@ export async function POST(request: NextRequest) {
         content: message,
       },
     });
+    timings['3_save_user_message'] = performance.now() - startSaveMsg;
 
-    // Get conversation history
-    const messages = await db.message.findMany({
-      where: { conversationId: conversation.id },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    const conversationHistory = messages.map((msg) => ({
+    // Build conversation history from already-fetched messages
+    const conversationHistory = conversation.messages.map((msg) => ({
       role: msg.role,
       content: msg.content,
     }));
 
-    // Get PDF and its full text content
-    const pdf = await db.pDF.findUnique({
-      where: { id: conversation.highlight.pdfId },
-    });
+    // PDF is already included via the batched query
+    const pdf = conversation.highlight.pdf;
 
     if (!pdf) {
       return NextResponse.json(
@@ -128,10 +113,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get or extract PDF full text
+    // Get or extract PDF full text (should already be extracted on upload)
+    const startPdfText = performance.now();
     let pdfFullText = pdf.fullText;
     if (!pdfFullText) {
-      // Extract on-demand if not stored
+      // Extract on-demand if not stored (fallback for old PDFs)
       try {
         pdfFullText = await extractPDFText(pdf.filepath);
         // Update PDF with extracted text for future use
@@ -139,6 +125,7 @@ export async function POST(request: NextRequest) {
           where: { id: pdf.id },
           data: { fullText: pdfFullText },
         });
+        timings['4_pdf_extraction'] = performance.now() - startPdfText;
       } catch (extractError) {
         console.error('Error extracting PDF text:', extractError);
         return NextResponse.json(
@@ -146,60 +133,53 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         );
       }
+    } else {
+      timings['4_pdf_text_cached'] = performance.now() - startPdfText;
     }
 
-    // Get or create cache ID for this PDF
-    let cacheId = pdf.cacheId;
-    if (!cacheId && pdfFullText) {
-      // Try to create cache (may return null if explicit caching not available)
-      cacheId = await createPDFCache(pdfFullText);
-      if (cacheId) {
-        // Store cache ID in database
-        await db.pDF.update({
-          where: { id: pdf.id },
-          data: { cacheId: cacheId },
-        });
-      }
+    // Get or create Gemini cache for this PDF
+    const startCache = performance.now();
+    const { cacheId, cacheName, isNewCache } = await getOrCreateCache(
+      pdf.id,
+      pdf.cacheId,
+      pdfFullText
+    );
+    timings['5_gemini_cache'] = performance.now() - startCache;
+    timings['5_gemini_cache_was_new'] = isNewCache ? 1 : 0;
+    
+    // Update cache ID in database if it changed
+    if (cacheId && cacheId !== pdf.cacheId) {
+      await db.pDF.update({
+        where: { id: pdf.id },
+        data: { cacheId: cacheId },
+      });
     }
 
     // Stream response from Gemini
-    // #region agent log
-    appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:130',message:'before Gemini API call',data:{pdfTextLength:pdfFullText.length,highlightTextLength:conversation.highlight.selectedText.length,messageLength:message.length,historyLength:conversationHistory.length,hasCacheId:!!cacheId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})+'\n').catch(()=>{});
-    // #endregion
+    const startGemini = performance.now();
     const stream = await streamChatResponse(
       pdfFullText,
       conversation.highlight.selectedText,
       message,
       conversationHistory,
-      cacheId
+      cacheName
     );
-    // #region agent log
-    appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:76',message:'Gemini API call succeeded',data:{hasStream:!!stream},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})+'\n').catch(()=>{});
-    // #endregion
+    timings['6_gemini_stream_start'] = performance.now() - startGemini;
+    timings['total_before_stream'] = performance.now() - startTotal;
+    
+    console.log('[Chat API Timings]', JSON.stringify(timings, null, 2));
 
     // Create a readable stream for the response
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
       async start(controller) {
-        // #region agent log
-        appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:stream-start',message:'stream start',data:{conversationId:conversation.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})+'\n').catch(()=>{});
-        // #endregion
         try {
           let fullResponse = '';
-          let chunkCount = 0;
           for await (const chunk of stream) {
-            chunkCount++;
             const chunkText = chunk.text();
             fullResponse += chunkText;
-            // #region agent log
-            if (chunkCount <= 3) appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:stream-chunk',message:'streaming chunk',data:{chunkCount,chunkLength:chunkText.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})+'\n').catch(()=>{});
-            // #endregion
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: chunkText })}\n\n`));
           }
-
-          // #region agent log
-          appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:stream-done',message:'stream complete',data:{totalChunks:chunkCount,responseLength:fullResponse.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})+'\n').catch(()=>{});
-          // #endregion
 
           // Save assistant message after streaming completes
           await db.message.create({
@@ -213,9 +193,6 @@ export async function POST(request: NextRequest) {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, conversationId: conversation.id })}\n\n`));
           controller.close();
         } catch (error) {
-          // #region agent log
-          appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:stream-error',message:'stream error caught',data:{errorMessage:error instanceof Error?error.message:String(error),errorName:error instanceof Error?error.name:'unknown'},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})+'\n').catch(()=>{});
-          // #endregion
           console.error('Error streaming response:', error);
           // Send error to client before closing
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: error instanceof Error ? error.message : 'Stream error' })}\n\n`));
@@ -232,9 +209,6 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    // #region agent log
-    appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:114',message:'API route error caught',data:{errorMessage:error instanceof Error?error.message:String(error),errorName:error instanceof Error?error.name:'unknown'},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'E'})+'\n').catch(()=>{});
-    // #endregion
     console.error('Error in chat API:', error);
     
     // Provide more specific error messages
@@ -256,4 +230,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

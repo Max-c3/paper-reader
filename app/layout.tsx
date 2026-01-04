@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'AI Paper Reader',
+  title: 'blueberry',
   description: 'Read and understand papers with AI assistance',
 };
 

@@ -73,29 +73,27 @@ export default function PapersPage() {
 
   return (
     <main className="min-h-screen bg-gray-50">
-      {/* Top Bar */}
-      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-6 py-3 flex justify-between items-center">
-        <h1 className="text-xl font-semibold text-gray-900">List of Papers</h1>
-        <Link
-          href="/"
-          className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 transition-colors"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-5 w-5"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
+      {/* Header */}
+      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-6 py-5 flex justify-between items-center">
+        <Link href="/" className="flex items-center gap-3">
+          <img 
+            src="/blueberry-logo.png" 
+            alt="Blueberry Logo" 
+            className="h-10 w-10 object-contain"
+          />
+          <span 
+            className="text-2xl"
+            style={{ fontFamily: "'American Typewriter', serif", fontWeight: 'bold' }}
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M10 19l-7-7m0 0l7-7m-7 7h18"
-            />
-          </svg>
-          <span>Back to Reader</span>
+            blueberry
+          </span>
         </Link>
+        <h1 
+          className="text-xl text-gray-900"
+          style={{ fontFamily: "'American Typewriter', serif" }}
+        >
+          List of Papers
+        </h1>
       </div>
 
       <div className="p-6">

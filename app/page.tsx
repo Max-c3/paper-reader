@@ -53,6 +53,17 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isLoadingHighlights, setIsLoadingHighlights] = useState(false);
   
+  // Pending highlight (not yet saved to DB - will be saved on first LLM call)
+  const [pendingHighlight, setPendingHighlight] = useState<{
+    pdfId: string;
+    pageNumber: number;
+    selectionRanges: any;
+    selectedText: string;
+  } | null>(null);
+  
+  // Deleted highlight for undo functionality
+  const [deletedHighlight, setDeletedHighlight] = useState<Highlight | null>(null);
+  
   // Split panel state
   const [splitRatio, setSplitRatio] = useState(60); // PDF takes 60% by default
   const [isDragging, setIsDragging] = useState(false);
@@ -160,42 +171,21 @@ export default function Home() {
         h.pageNumber === selectionRanges.page
     );
 
-    let highlightId: string;
-    let conversationId: string | null = null;
-
     if (existingHighlight) {
-      highlightId = existingHighlight.id;
-      conversationId = existingHighlight.conversation?.id || null;
-      setCurrentHighlightId(highlightId);
-      setCurrentConversationId(conversationId);
+      // Use existing highlight
+      setCurrentHighlightId(existingHighlight.id);
+      setCurrentConversationId(existingHighlight.conversation?.id || null);
+      setPendingHighlight(null);
     } else {
-      // Create new highlight
-      try {
-        const res = await fetch('/api/highlights', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            pdfId: selectedPdf.id,
-            pageNumber: selectionRanges.page,
-            selectionRanges,
-            selectedText,
-          }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          highlightId = data.highlight.id;
-          setHighlights((prev) => [...prev, data.highlight]);
-          setCurrentHighlightId(highlightId);
-        } else {
-          const errorData = await res.json().catch(() => ({}));
-          throw new Error(errorData.error || 'Failed to create highlight');
-        }
-      } catch (error) {
-        console.error('Error creating highlight:', error);
-        setError(error instanceof Error ? error.message : 'Error creating highlight');
-        return;
-      }
+      // Store as pending - will only save to DB when first LLM call happens
+      setPendingHighlight({
+        pdfId: selectedPdf.id,
+        pageNumber: selectionRanges.page,
+        selectionRanges,
+        selectedText,
+      });
+      setCurrentHighlightId(null);
+      setCurrentConversationId(null);
     }
 
     setShowChat(true);
@@ -212,34 +202,123 @@ export default function Home() {
     setShowChat(true);
   }, [highlights]);
 
+  const handleHighlightDelete = useCallback(async (highlightId: string) => {
+    try {
+      const res = await fetch(`/api/highlights?id=${highlightId}`, {
+        method: 'DELETE',
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        // Store deleted highlight for undo
+        setDeletedHighlight(data.deleted);
+        // Remove from local state
+        setHighlights((prev) => prev.filter((h) => h.id !== highlightId));
+        // Close chat if this highlight was open
+        if (currentHighlightId === highlightId) {
+          setShowChat(false);
+          setCurrentHighlightId(null);
+          setCurrentConversationId(null);
+        }
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to delete highlight');
+      }
+    } catch (error) {
+      console.error('Error deleting highlight:', error);
+      setError(error instanceof Error ? error.message : 'Error deleting highlight');
+    }
+  }, [currentHighlightId]);
+
+  const handleUndoDelete = useCallback(async () => {
+    if (!deletedHighlight) return;
+
+    try {
+      const res = await fetch('/api/highlights', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ highlight: deletedHighlight }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        // Add restored highlight back to local state
+        setHighlights((prev) => [...prev, data.highlight]);
+        // Clear deleted highlight
+        setDeletedHighlight(null);
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to restore highlight');
+      }
+    } catch (error) {
+      console.error('Error restoring highlight:', error);
+      setError(error instanceof Error ? error.message : 'Error restoring highlight');
+    }
+  }, [deletedHighlight]);
+
+  // Keyboard shortcut for undo (Cmd+Z / Ctrl+Z)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const modifier = isMac ? e.metaKey : e.ctrlKey;
+
+      if (modifier && e.key === 'z' && deletedHighlight) {
+        e.preventDefault();
+        handleUndoDelete();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [deletedHighlight, handleUndoDelete]);
+
   const handleSendMessage = async (
     message: string,
     onStreamChunk: (text: string) => void
   ) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:handleSendMessage-entry',message:'handleSendMessage called',data:{currentHighlightId,currentConversationId,messageLength:message.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
-    if (!currentHighlightId) {
+    let highlightId = currentHighlightId;
+    let conversationId = currentConversationId;
+
+    // If we have a pending highlight, save it now (first LLM call)
+    if (pendingHighlight && !highlightId) {
+      try {
+        const res = await fetch('/api/highlights', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(pendingHighlight),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          highlightId = data.highlight.id;
+          setHighlights((prev) => [...prev, data.highlight]);
+          setCurrentHighlightId(highlightId);
+          setPendingHighlight(null);
+        } else {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to create highlight');
+        }
+      } catch (error) {
+        console.error('Error creating highlight:', error);
+        throw error;
+      }
+    }
+
+    if (!highlightId) {
       return;
     }
 
     try {
       const requestBody = {
-        highlightId: currentHighlightId,
+        highlightId,
         message,
-        conversationId: currentConversationId,
+        conversationId,
       };
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:before-fetch',message:'about to call /api/chat',data:{requestBody},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
       });
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:after-fetch',message:'fetch response received',data:{status:res.status,ok:res.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({ error: 'Failed to send message' }));
@@ -251,28 +330,19 @@ export default function Home() {
       const decoder = new TextDecoder();
 
       if (reader) {
-        let chunkCount = 0;
         while (true) {
           const { done, value } = await reader.read();
-          if (done) {
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:stream-done',message:'stream finished',data:{totalChunks:chunkCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})}).catch(()=>{});
-            // #endregion
-            break;
-          }
+          if (done) break;
 
           const chunk = decoder.decode(value);
           const lines = chunk.split('\n');
-          chunkCount++;
 
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               try {
                 const data = JSON.parse(line.slice(6));
+                // Handle streaming errors from server
                 if (data.error) {
-                  // #region agent log
-                  fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:stream-error',message:'error in stream',data:{error:data.error},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'C'})}).catch(()=>{});
-                  // #endregion
                   throw new Error(data.error);
                 }
                 if (data.text) {
@@ -286,21 +356,16 @@ export default function Home() {
                   }
                 }
               } catch (e) {
-                // #region agent log
-                if (e instanceof Error && e.message !== 'Unexpected end of JSON input') {
-                  fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:parse-error',message:'JSON parse error in stream',data:{line,error:e.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'B'})}).catch(()=>{});
-                  throw e; // Re-throw if it's not just a parse error
+                // Re-throw actual errors, ignore JSON parse errors from partial chunks
+                if (e instanceof Error && !e.message.includes('JSON')) {
+                  throw e;
                 }
-                // #endregion
               }
             }
           }
         }
       }
     } catch (error) {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/2af80244-8311-4650-8433-37609ae640a4',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'page.tsx:catch-error',message:'error caught in handleSendMessage',data:{error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       console.error('Error sending message:', error);
       throw error;
     }
@@ -356,33 +421,32 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-gray-50">
-      {/* Top Bar with List Button */}
-      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-6 py-3 flex justify-end">
+      {/* Header */}
+      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-6 py-5 flex justify-between items-center">
+        <div className="flex items-center gap-3">
+          <img 
+            src="/blueberry-logo.png" 
+            alt="Blueberry Logo" 
+            className="h-10 w-10 object-contain"
+          />
+          <span 
+            className="text-2xl"
+            style={{ fontFamily: "'American Typewriter', serif", fontWeight: 'bold' }}
+          >
+            blueberry
+          </span>
+        </div>
         <Link
           href="/papers"
-          className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 transition-colors"
+          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+          style={{ fontFamily: "'American Typewriter', serif" }}
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-5 w-5"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-            />
-          </svg>
           <span>List of Papers</span>
         </Link>
       </div>
 
       <div className="p-4">
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold mb-6">AI Paper Reader</h1>
 
         {/* Error Display */}
         {error && (
@@ -410,7 +474,7 @@ export default function Home() {
         <div className="mb-6">
           <div className="flex gap-4 items-center mb-4">
             <label className="px-4 py-2 bg-blue-500 text-white rounded-lg cursor-pointer hover:bg-blue-600 transition-colors">
-              {isUploading ? 'Uploading...' : 'Upload PDF'}
+              {isUploading ? 'Uploading...' : 'Upload Paper'}
               <input
                 type="file"
                 accept=".pdf"
@@ -458,6 +522,7 @@ export default function Home() {
                 onTextSelect={handleTextSelect}
                 highlights={highlights}
                 onHighlightClick={handleHighlightClick}
+                onHighlightDelete={handleHighlightDelete}
               />
             </div>
 
@@ -491,6 +556,8 @@ export default function Home() {
                 onClose={() => {
                   setShowChat(false);
                   setSelectedText('');
+                  // Clear pending highlight if no LLM call was made
+                  setPendingHighlight(null);
                 }}
                 highlightedText={selectedText}
                 conversationId={currentConversationId || undefined}
