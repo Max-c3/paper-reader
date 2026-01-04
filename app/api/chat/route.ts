@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { streamChatResponse } from '@/lib/gemini';
+import { streamChatResponse, createPDFCache } from '@/lib/gemini';
+import { extractPDFText } from '@/lib/pdf-extractor';
 import { appendFile } from 'fs/promises';
 import { join } from 'path';
 
@@ -115,14 +116,62 @@ export async function POST(request: NextRequest) {
       content: msg.content,
     }));
 
+    // Get PDF and its full text content
+    const pdf = await db.pDF.findUnique({
+      where: { id: conversation.highlight.pdfId },
+    });
+
+    if (!pdf) {
+      return NextResponse.json(
+        { error: 'PDF not found' },
+        { status: 404 }
+      );
+    }
+
+    // Get or extract PDF full text
+    let pdfFullText = pdf.fullText;
+    if (!pdfFullText) {
+      // Extract on-demand if not stored
+      try {
+        pdfFullText = await extractPDFText(pdf.filepath);
+        // Update PDF with extracted text for future use
+        await db.pDF.update({
+          where: { id: pdf.id },
+          data: { fullText: pdfFullText },
+        });
+      } catch (extractError) {
+        console.error('Error extracting PDF text:', extractError);
+        return NextResponse.json(
+          { error: 'Failed to extract PDF content. Please try re-uploading the PDF.' },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Get or create cache ID for this PDF
+    let cacheId = pdf.cacheId;
+    if (!cacheId && pdfFullText) {
+      // Try to create cache (may return null if explicit caching not available)
+      cacheId = await createPDFCache(pdfFullText);
+      if (cacheId) {
+        // Store cache ID in database
+        await db.pDF.update({
+          where: { id: pdf.id },
+          data: { cacheId: cacheId },
+        });
+      }
+    }
+
     // Stream response from Gemini
     // #region agent log
-    appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:71',message:'before Gemini API call',data:{highlightTextLength:conversation.highlight.selectedText.length,messageLength:message.length,historyLength:conversationHistory.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})+'\n').catch(()=>{});
+    appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:130',message:'before Gemini API call',data:{pdfTextLength:pdfFullText.length,highlightTextLength:conversation.highlight.selectedText.length,messageLength:message.length,historyLength:conversationHistory.length,hasCacheId:!!cacheId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})+'\n').catch(()=>{});
     // #endregion
     const stream = await streamChatResponse(
+      pdfFullText,
       conversation.highlight.selectedText,
       message,
-      conversationHistory
+      conversationHistory,
+      cacheId
     );
     // #region agent log
     appendFile(join(process.cwd(),'.cursor','debug.log'),JSON.stringify({location:'app/api/chat/route.ts:76',message:'Gemini API call succeeded',data:{hasStream:!!stream},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})+'\n').catch(()=>{});

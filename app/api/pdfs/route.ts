@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { extractPDFText } from '@/lib/pdf-extractor';
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,12 +36,23 @@ export async function POST(request: NextRequest) {
     await writeFile(filepath, buffer);
     console.log('File saved to:', filepath);
 
+    // Extract PDF text content
+    let fullText: string | null = null;
+    try {
+      fullText = await extractPDFText(`uploads/${filename}`);
+      console.log('PDF text extracted, length:', fullText.length);
+    } catch (extractError) {
+      console.error('Error extracting PDF text (continuing without text):', extractError);
+      // Continue without text - extraction failure shouldn't block upload
+    }
+
     // Save to database
     try {
       const pdf = await db.pDF.create({
         data: {
           filename: file.name,
           filepath: `uploads/${filename}`,
+          fullText: fullText,
         },
       });
       console.log('PDF saved to database:', pdf.id);
