@@ -132,7 +132,7 @@ export default function ChatOverlay({
         {/* Highlighted text context */}
         <div className="p-4 bg-gray-50 border-b text-sm">
           <p className="text-gray-600 font-medium mb-1">Selected text:</p>
-          <p className="text-gray-800 italic">"{highlightedText.substring(0, 200)}..."</p>
+          <p className="text-gray-800 italic">&quot;{highlightedText.substring(0, 200)}...&quot;</p>
         </div>
 
         {/* Messages */}
