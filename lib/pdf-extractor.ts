@@ -18,7 +18,7 @@ export async function extractPDFText(filepath: string): Promise<string> {
     
     // Use pdf-parse internal module to avoid test file loading issue
     // The main entry point tries to load './test/data/05-versions-space.pdf'
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    // eslint-disable-next-line
     const pdfParse = require('pdf-parse/lib/pdf-parse.js');
     
     // Extract text using pdf-parse (designed for Node.js)
