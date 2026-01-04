@@ -12,6 +12,7 @@ datasource db {
 
 model PDF {
   id         String     @id @default(cuid())
+  title      String?    // Extracted title with date: "Title (Jan 2024)"
   filename   String
   filepath   String
   uploadedAt DateTime   @default(now())

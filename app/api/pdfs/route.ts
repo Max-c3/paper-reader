@@ -4,6 +4,7 @@ import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { extractPDFText } from '@/lib/pdf-extractor';
+import { extractTitleAndDate } from '@/lib/gemini';
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,10 +47,27 @@ export async function POST(request: NextRequest) {
       // Continue without text - extraction failure shouldn't block upload
     }
 
+    // Extract title and date from PDF
+    let title: string | null = null;
+    if (fullText) {
+      try {
+        title = await extractTitleAndDate(fullText);
+        if (title) {
+          console.log('PDF title and date extracted:', title);
+        } else {
+          console.log('No title extracted from PDF');
+        }
+      } catch (titleError) {
+        console.error('Error extracting PDF title (continuing without title):', titleError);
+        // Continue without title - extraction failure shouldn't block upload
+      }
+    }
+
     // Save to database
     try {
       const pdf = await db.pDF.create({
         data: {
+          title: title,
           filename: file.name,
           filepath: `uploads/${filename}`,
           fullText: fullText,

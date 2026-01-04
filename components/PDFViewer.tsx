@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, memo, useEffect } from 'react';
+import { useState, useCallback, memo, useEffect, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -27,6 +27,7 @@ if (typeof window !== 'undefined') {
 interface PDFViewerProps {
   file: string;
   filename?: string;
+  title?: string;
   onTextSelect: (selectedText: string, selectionRanges: any) => void;
   highlights: Array<{
     id: string;
@@ -36,96 +37,50 @@ interface PDFViewerProps {
   }>;
   onHighlightClick: (highlightId: string) => void;
   onHighlightDelete?: (highlightId: string) => void;
-  onTitleExtracted?: (title: string) => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 const PDFViewer = memo(function PDFViewer({
   file,
   filename,
+  title,
   onTextSelect,
   highlights,
   onHighlightClick,
   onHighlightDelete,
-  onTitleExtracted,
+  isFullscreen = false,
+  onToggleFullscreen,
 }: PDFViewerProps) {
   const [numPages, setNumPages] = useState<number>(0);
   const [selectedText, setSelectedText] = useState('');
   const [selectionRanges, setSelectionRanges] = useState<any>(null);
   const [scale, setScale] = useState<number>(1.2); // Start at 120% like papiers.ai
-  const [extractedTitle, setExtractedTitle] = useState<string>(filename || 'Document');
 
-  // Extract title from first page
-  const extractTitleFromPDF = useCallback(async (pdfDocument: any) => {
-    try {
-      const page = await pdfDocument.getPage(1);
-      const textContent = await page.getTextContent();
-      
-      // Get text items and find the title (usually first large text block)
-      const textItems = textContent.items as Array<{ str: string; transform: number[] }>;
-      
-      // Find the largest text (likely the title) or use first few lines
-      let title = '';
-      let maxFontSize = 0;
-      
-      for (const item of textItems.slice(0, 20)) { // Check first 20 items
-        if (item.str && item.str.trim()) {
-          // Calculate approximate font size from transform matrix
-          const fontSize = item.transform ? Math.abs(item.transform[0]) : 0;
-          if (fontSize > maxFontSize && fontSize > 10) {
-            maxFontSize = fontSize;
-            title = item.str.trim();
-          }
-        }
-      }
-      
-      // If no large text found, use first non-empty line
-      if (!title) {
-        for (const item of textItems) {
-          if (item.str && item.str.trim() && item.str.trim().length > 5) {
-            title = item.str.trim();
-            break;
-          }
-        }
-      }
-      
-      // Clean up title (remove extra whitespace, limit length)
-      if (title) {
-        title = title.replace(/\s+/g, ' ').trim();
-        if (title.length > 100) {
-          title = title.substring(0, 100) + '...';
-        }
-        setExtractedTitle(title);
-        if (onTitleExtracted) {
-          onTitleExtracted(title);
-        }
-      }
-    } catch (error) {
-      console.error('Error extracting title:', error);
-      // Fallback to filename
-      setExtractedTitle(filename || 'Document');
-    }
-  }, [filename, onTitleExtracted]);
-
-  const onDocumentLoadSuccess = async ({ numPages }: { numPages: number }) => {
+  const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
-    
-    // Extract title from first page
-    try {
-      const loadingTask = pdfjs.getDocument(file);
-      const pdfDocument = await loadingTask.promise;
-      await extractTitleFromPDF(pdfDocument);
-    } catch (error) {
-      console.error('Error loading PDF for title extraction:', error);
-    }
   };
 
-  // Zoom functions
+  // Throttle refs for zoom operations
+  const zoomInLastCallRef = useRef<number>(0);
+  const zoomOutLastCallRef = useRef<number>(0);
+  const ZOOM_THROTTLE_MS = 100; // Throttle to max once per 100ms
+
+  // Zoom functions with throttling to prevent rapid successive calls
   const zoomIn = useCallback(() => {
-    setScale((prev) => Math.min(prev + 0.1, 3.0)); // Max 300%
+    const now = Date.now();
+    if (now - zoomInLastCallRef.current >= ZOOM_THROTTLE_MS) {
+      setScale((prev) => Math.min(prev + 0.1, 3.0)); // Max 300%
+      zoomInLastCallRef.current = now;
+    }
   }, []);
 
   const zoomOut = useCallback(() => {
-    setScale((prev) => Math.max(prev - 0.1, 0.5)); // Min 50%
+    const now = Date.now();
+    if (now - zoomOutLastCallRef.current >= ZOOM_THROTTLE_MS) {
+      setScale((prev) => Math.max(prev - 0.1, 0.5)); // Min 50%
+      zoomOutLastCallRef.current = now;
+    }
   }, []);
 
   // Keyboard shortcuts: Cmd+J (zoom in), Cmd+K (zoom out), Arrow keys (page navigation)
@@ -192,6 +147,16 @@ const PDFViewer = memo(function PDFViewer({
     const pageRect = pageElement.getBoundingClientRect();
     const selectionRect = range.getBoundingClientRect();
 
+    // Get individual rects for each line of the selection
+    // Find the rect with the rightmost point to position the popup correctly
+    const clientRects = range.getClientRects();
+    let rightmostRect = clientRects[0];
+    for (let i = 1; i < clientRects.length; i++) {
+      if (clientRects[i].right > rightmostRect.right) {
+        rightmostRect = clientRects[i];
+      }
+    }
+
     // Calculate relative coordinates (normalized to 100% scale for storage)
     const ranges = {
       page: pageNum,
@@ -201,6 +166,10 @@ const PDFViewer = memo(function PDFViewer({
       endY: (selectionRect.bottom - pageRect.top) / scale,
       startOffset: range.startOffset,
       endOffset: range.endOffset,
+      // Viewport coordinates for popup positioning (fixed position)
+      // Use the rightmost rect's position for accurate placement
+      viewportEndX: rightmostRect.right,
+      viewportStartY: rightmostRect.top,
     };
 
     setSelectedText(text);
@@ -232,7 +201,7 @@ const PDFViewer = memo(function PDFViewer({
         {/* Left: Paper Title */}
         <div className="flex-1 min-w-0">
           <h2 className="text-lg font-medium text-gray-900 truncate">
-            {extractedTitle}
+            {title || filename || 'Document'}
           </h2>
         </div>
 
@@ -315,6 +284,50 @@ const PDFViewer = memo(function PDFViewer({
           <span className="text-sm text-gray-600">
             {numPages > 0 ? `${numPages} pages` : ''}
           </span>
+
+          {/* Fullscreen Toggle */}
+          {onToggleFullscreen && (
+            <button
+              onClick={onToggleFullscreen}
+              className="p-1 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
+              title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            >
+              {isFullscreen ? (
+                // Compress/exit fullscreen icon
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25"
+                  />
+                </svg>
+              ) : (
+                // Expand/fullscreen icon
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
+                  />
+                </svg>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -361,8 +374,16 @@ const PDFViewer = memo(function PDFViewer({
                             {/* Highlight background */}
                             <div
                               onClick={() => onHighlightClick(highlight.id)}
-                              className="absolute inset-0 cursor-pointer bg-gray-300/30 transition-all duration-200 ease-out group-hover:scale-[1.03] group-hover:shadow-[0_0_8px_2px_rgba(147,112,219,0.4),0_0_12px_4px_rgba(236,72,153,0.25),0_0_16px_6px_rgba(59,130,246,0.2)]"
-                              style={{ borderRadius: '3px' }}
+                              className="absolute inset-0 cursor-pointer bg-gray-300/30 transition-all duration-200 ease-out group-hover:scale-[1.03]"
+                              style={{ 
+                                borderRadius: '3px',
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.boxShadow = '0 0 12px 4px rgba(59, 130, 246, 0.6), 0 0 24px 8px rgba(96, 165, 250, 0.4), 0 0 40px 12px rgba(59, 130, 246, 0.25), 0 0 60px 20px rgba(59, 130, 246, 0.1)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.boxShadow = 'none';
+                              }}
                               title="Click to reopen conversation"
                             />
                             {/* Delete button */}

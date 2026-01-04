@@ -33,30 +33,32 @@ export default function SelectionPopup({
   return (
     <div
       ref={popupRef}
-      className="fixed z-50 bg-white border border-gray-300 rounded-lg shadow-lg p-2"
+      className="fixed z-50"
       style={{
         left: `${position.x}px`,
-        top: `${position.y - 50}px`,
+        top: `${position.y}px`,
       }}
     >
       <button
         onClick={onQuery}
-        className="flex items-center gap-2 px-3 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+        className="cursor-pointer hover:scale-105 transition-transform duration-200"
         title="Ask AI about this selection"
+        style={{
+          background: 'transparent',
+          border: 'none',
+          padding: '0',
+        }}
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          className="h-5 w-5"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            fillRule="evenodd"
-            d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.829V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z"
-            clipRule="evenodd"
-          />
-        </svg>
-        Ask AI
+        <img 
+          src="/blueberry-logo.png" 
+          alt="Ask AI" 
+          className="object-contain"
+          style={{
+            width: '90px',
+            height: '90px',
+            filter: 'drop-shadow(0 0 8px rgba(59, 130, 246, 0.7)) drop-shadow(0 0 16px rgba(96, 165, 250, 0.5)) drop-shadow(0 0 24px rgba(59, 130, 246, 0.3))',
+          }}
+        />
       </button>
     </div>
   );

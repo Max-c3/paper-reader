@@ -26,7 +26,7 @@ const getCacheManager = () => {
 const CACHE_TTL_SECONDS = 3600;
 
 // Model to use for caching (must match the model used for generation)
-const CACHE_MODEL = 'models/gemini-2.0-flash-001';
+const CACHE_MODEL = 'models/gemini-3-pro-preview';
 
 interface CacheResult {
   cacheId: string | null;
@@ -198,3 +198,57 @@ ${highlightPrompt}`;
   const result = await chat.sendMessageStream(userMessage);
   return result.stream;
 };
+
+/**
+ * Extracts the title and publication date from PDF text using Gemini 2 Flash
+ * @param pdfText - Full text content of the PDF
+ * @returns Promise<string | null> - Formatted title with date: "Title (Jan 2024)" or null if extraction fails
+ */
+export async function extractTitleAndDate(pdfText: string): Promise<string | null> {
+  if (!genAI) {
+    console.error('GEMINI_API_KEY not set, cannot extract title');
+    return null;
+  }
+
+  try {
+    // Use Gemini 2 Flash model
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    
+    const prompt = `extract the title and month + year of publishing of this paper.
+outputformat: <title> (<month> <year>)
+format of <month> = Jan, Feb, Mar, Apr, etc.
+format of <year> = "yyyy", e.g. "1998"
+You ONLY output the outputformat, e.g. "Research Paper XYZ (Jan 2024)!"
+
+Paper content:
+"""
+${pdfText.slice(0, 10000)}
+"""`;
+    
+    const result = await model.generateContent(prompt);
+    const extracted = result.response.text().trim();
+    
+    // Clean up the response - remove any extra text that might have been added
+    // The model should only return the format, but sometimes it adds explanations
+    const match = extracted.match(/^(.+?)\s*\(([A-Z][a-z]{2})\s+(\d{4})\)/);
+    if (match) {
+      return `${match[1].trim()} (${match[2]} ${match[3]})`;
+    }
+    
+    // If no match, try to extract just the format part
+    const formatMatch = extracted.match(/(.+?)\s*\(([A-Z][a-z]{2})\s+(\d{4})\)/);
+    if (formatMatch) {
+      return `${formatMatch[1].trim()} (${formatMatch[2]} ${formatMatch[3]})`;
+    }
+    
+    // Return as-is if it looks reasonable
+    if (extracted.length > 10 && extracted.length < 500) {
+      return extracted;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error extracting title and date from PDF:', error);
+    return null;
+  }
+}

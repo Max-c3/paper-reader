@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 
 interface PDF {
   id: string;
+  title?: string;
   filename: string;
   filepath: string;
   uploadedAt: string;
@@ -74,27 +75,42 @@ export default function PapersPage() {
   return (
     <main className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-6 py-5 flex justify-between items-center">
-        <Link href="/" className="flex items-center gap-3">
+      <div className="sticky top-0 z-20 bg-white h-24 flex items-center overflow-visible">
+        {/* Logo - absolutely positioned */}
+        <Link href="/">
           <img 
             src="/blueberry-logo.png" 
             alt="Blueberry Logo" 
-            className="h-10 w-10 object-contain"
+            className="absolute object-contain"
+            style={{ height: '130px', left: '130px', top: '50%', transform: 'translateY(-50%)' }}
           />
-          <span 
-            className="text-2xl"
-            style={{ fontFamily: "'American Typewriter', serif", fontWeight: 'bold' }}
-          >
-            blueberry
-          </span>
         </Link>
-        <h1 
-          className="text-xl text-gray-900"
-          style={{ fontFamily: "'American Typewriter', serif" }}
-        >
-          List of Papers
-        </h1>
+        {/* Text and navigation - in normal flow */}
+        <div className="w-full px-6 flex justify-between items-center">
+          <Link href="/">
+            <span 
+              className="text-3xl hover:opacity-80 transition-opacity"
+              style={{ fontFamily: "'American Typewriter', serif", fontWeight: 'bold', marginLeft: '242px' }}
+            >
+              blueberry
+            </span>
+          </Link>
+          <h1 
+            className="text-xl text-gray-900"
+            style={{ fontFamily: "'American Typewriter', serif" }}
+          >
+            List of Papers
+          </h1>
+        </div>
       </div>
+      {/* Glowing separator */}
+      <div 
+        className="h-[3px] w-full"
+        style={{
+          background: 'linear-gradient(90deg, transparent, #3b82f6 15%, #60a5fa 50%, #3b82f6 85%, transparent)',
+          boxShadow: '0 0 12px 4px rgba(59, 130, 246, 0.6), 0 0 24px 8px rgba(96, 165, 250, 0.4), 0 0 40px 12px rgba(59, 130, 246, 0.25), 0 0 60px 20px rgba(59, 130, 246, 0.1)'
+        }}
+      />
 
       <div className="p-6">
         <div className="max-w-4xl mx-auto">
@@ -123,7 +139,7 @@ export default function PapersPage() {
                       className="text-left w-full"
                     >
                       <h3 className="text-base font-medium text-gray-900 truncate hover:text-blue-600 transition-colors">
-                        {pdf.filename}
+                        {pdf.title || pdf.filename}
                       </h3>
                       <p className="text-sm text-gray-500 mt-1">
                         Uploaded {formatDate(pdf.uploadedAt)}

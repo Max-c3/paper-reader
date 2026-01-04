@@ -33,10 +33,54 @@ export default function ChatOverlay({
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const prevConversationIdRef = useRef<string | undefined>(conversationId);
+  const hasUnsavedMessagesRef = useRef(false);
+  const messagesRef = useRef(messages);
+
+  // Keep messagesRef in sync with messages
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
-    setMessages(initialMessages);
-  }, [initialMessages, conversationId]);
+    // Only reset messages if conversation ID changed (new conversation)
+    // Don't reset if we're streaming or if we have unsaved messages (messages without IDs)
+    const conversationChanged = prevConversationIdRef.current !== conversationId;
+    const currentMessages = messagesRef.current;
+    const hasUnsavedMessages = currentMessages.some(m => !m.id);
+    
+    // Check if initialMessages has a complete conversation (has messages with IDs)
+    const initialMessagesHasCompleteConversation = initialMessages.length > 0 && 
+      initialMessages.every(m => m.id);
+    
+    // Don't reset if we're streaming or have unsaved messages
+    if (conversationChanged) {
+      if (!isStreaming && !hasUnsavedMessages) {
+        // Clean reset for new conversation
+        setMessages(initialMessages);
+        prevConversationIdRef.current = conversationId;
+        hasUnsavedMessagesRef.current = false;
+      } else if (initialMessagesHasCompleteConversation && !isStreaming) {
+        // InitialMessages has complete conversation with IDs, use it directly (no duplicates)
+        setMessages(initialMessages);
+        prevConversationIdRef.current = conversationId;
+        hasUnsavedMessagesRef.current = false;
+      } else if (isStreaming && !initialMessagesHasCompleteConversation) {
+        // We're streaming but initialMessages doesn't have the conversation yet
+        // Keep current messages (they have the user message and streaming assistant message)
+        prevConversationIdRef.current = conversationId;
+      }
+    } else if (currentMessages.length === 0 && initialMessages.length > 0 && !isStreaming) {
+      // Starting fresh with initial messages
+      setMessages(initialMessages);
+    } else if (!conversationChanged && initialMessagesHasCompleteConversation && !isStreaming) {
+      // InitialMessages updated with complete conversation (all messages have IDs)
+      // Use it to avoid duplicates, especially after first message is saved
+      if (currentMessages.some(m => !m.id) || initialMessages.length >= currentMessages.length) {
+        setMessages(initialMessages);
+      }
+    }
+  }, [initialMessages, conversationId, isStreaming]);
 
   useEffect(() => {
     if (isOpen && inputRef.current) {
@@ -74,6 +118,7 @@ export default function ChatOverlay({
     const messageToSend = input.trim();
     setInput('');
     setIsStreaming(true);
+    hasUnsavedMessagesRef.current = true;
 
     // Add placeholder for streaming response
     setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
@@ -108,6 +153,8 @@ export default function ChatOverlay({
       });
     } finally {
       setIsStreaming(false);
+      // After streaming completes, mark messages as saved (they'll have IDs after reload)
+      hasUnsavedMessagesRef.current = false;
     }
   };
 
@@ -219,9 +266,9 @@ export default function ChatOverlay({
                       p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
                       strong: ({ children }) => <strong className="font-semibold text-slate-800">{children}</strong>,
                       em: ({ children }) => <em className="italic">{children}</em>,
-                      ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
-                      ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
-                      li: ({ children }) => <li className="ml-2">{children}</li>,
+                      ul: ({ children }) => <ul className="list-disc list-outside mb-2 space-y-1 pl-6">{children}</ul>,
+                      ol: ({ children }) => <ol className="list-decimal list-outside mb-2 space-y-1 pl-6">{children}</ol>,
+                      li: ({ children }) => <li className="leading-relaxed">{children}</li>,
                       code: ({ children }) => <code className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-sm font-mono">{children}</code>,
                       pre: ({ children }) => <pre className="bg-slate-100 p-3 rounded-lg overflow-x-auto mb-2 text-sm">{children}</pre>,
                     }}

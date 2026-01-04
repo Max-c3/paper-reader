@@ -17,6 +17,7 @@ const PDFViewer = dynamic(() => import('@/components/PDFViewer'), {
 
 interface PDF {
   id: string;
+  title?: string;
   filename: string;
   filepath: string;
   uploadedAt: string;
@@ -68,6 +69,9 @@ export default function Home() {
   const [splitRatio, setSplitRatio] = useState(60); // PDF takes 60% by default
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Load PDFs on mount
   useEffect(() => {
@@ -151,8 +155,15 @@ export default function Home() {
     if (text.trim()) {
       setSelectedText(text);
       setSelectionRanges(ranges);
-      // Position popup near selection
-      setPopupPosition({ x: ranges.endX + 20, y: ranges.startY });
+      // Position popup with its CENTER exactly above the rightmost pixel of the selection
+      // Button is 90px wide, so left edge = viewportEndX - (buttonWidth / 2) to center it
+      // Button is 90px tall, bottom should be 8px above selection top
+      const buttonSize = 90;
+      const gap = 3;
+      setPopupPosition({ 
+        x: ranges.viewportEndX - (buttonSize / 2),  // Center horizontally on right edge
+        y: ranges.viewportStartY - buttonSize - gap  // 8px gap above selection
+      });
       setShowPopup(true);
     } else {
       setShowPopup(false);
@@ -271,6 +282,27 @@ export default function Home() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [deletedHighlight, handleUndoDelete]);
+
+  // "f" key to toggle fullscreen (only when not in a text field)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input/textarea/contenteditable
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+      
+      if (e.key === 'f' || e.key === 'F') {
+        setIsFullscreen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const handleSendMessage = async (
     message: string,
@@ -422,28 +454,39 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 px-6 py-5 flex justify-between items-center">
-        <div className="flex items-center gap-3">
-          <img 
-            src="/blueberry-logo.png" 
-            alt="Blueberry Logo" 
-            className="h-10 w-10 object-contain"
-          />
+      <div className="sticky top-0 z-20 bg-white h-24 flex items-center overflow-visible">
+        {/* Logo - absolutely positioned */}
+        <img 
+          src="/blueberry-logo.png" 
+          alt="Blueberry Logo" 
+          className="absolute object-contain"
+          style={{ height: '130px', left: '130px', top: '50%', transform: 'translateY(-50%)' }}
+        />
+        {/* Text and navigation - in normal flow */}
+        <div className="w-full px-6 flex justify-between items-center">
           <span 
-            className="text-2xl"
-            style={{ fontFamily: "'American Typewriter', serif", fontWeight: 'bold' }}
+            className="text-3xl"
+            style={{ fontFamily: "'American Typewriter', serif", fontWeight: 'bold', marginLeft: '242px' }}
           >
             blueberry
           </span>
+          <Link
+            href="/papers"
+            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors text-lg"
+            style={{ fontFamily: "'American Typewriter', serif" }}
+          >
+            <span>List of Papers</span>
+          </Link>
         </div>
-        <Link
-          href="/papers"
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
-          style={{ fontFamily: "'American Typewriter', serif" }}
-        >
-          <span>List of Papers</span>
-        </Link>
       </div>
+      {/* Glowing separator */}
+      <div 
+        className="h-[3px] w-full"
+        style={{
+          background: 'linear-gradient(90deg, transparent, #3b82f6 15%, #60a5fa 50%, #3b82f6 85%, transparent)',
+          boxShadow: '0 0 12px 4px rgba(59, 130, 246, 0.6), 0 0 24px 8px rgba(96, 165, 250, 0.4), 0 0 40px 12px rgba(59, 130, 246, 0.25), 0 0 60px 20px rgba(59, 130, 246, 0.1)'
+        }}
+      />
 
       <div className="p-4">
         <div className="max-w-7xl mx-auto">
@@ -496,7 +539,7 @@ export default function Home() {
                 <option value="">Select a PDF...</option>
                 {pdfs.map((pdf) => (
                   <option key={pdf.id} value={pdf.id}>
-                    {pdf.filename}
+                    {pdf.title || pdf.filename}
                   </option>
                 ))}
               </select>
@@ -508,8 +551,10 @@ export default function Home() {
         {selectedPdf && (
           <div 
             ref={containerRef}
-            className="flex gap-0 rounded-lg overflow-hidden"
-            style={{ height: 'calc(100vh - 200px)' }}
+            className={`flex gap-0 rounded-lg overflow-hidden ${
+              isFullscreen ? 'fixed inset-0 z-50 rounded-none' : ''
+            }`}
+            style={{ height: isFullscreen ? '100vh' : 'calc(100vh - 200px)' }}
           >
             {/* PDF Viewer */}
             <div 
@@ -519,10 +564,13 @@ export default function Home() {
               <PDFViewer
                 file={`/api/files/${selectedPdf.filepath}`}
                 filename={selectedPdf.filename}
+                title={selectedPdf.title || selectedPdf.filename}
                 onTextSelect={handleTextSelect}
                 highlights={highlights}
                 onHighlightClick={handleHighlightClick}
                 onHighlightDelete={handleHighlightDelete}
+                isFullscreen={isFullscreen}
+                onToggleFullscreen={() => setIsFullscreen(prev => !prev)}
               />
             </div>
 
