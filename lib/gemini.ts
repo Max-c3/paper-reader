@@ -86,7 +86,7 @@ export async function getOrCreateCache(
     });
 
     console.log(`[Gemini Cache] Created new cache: ${cache.name}`);
-    return { cacheId: cache.name, cacheName: cache.name, isNewCache: true };
+    return { cacheId: cache.name ?? null, cacheName: cache.name ?? null, isNewCache: true };
   } catch (error) {
     console.error('[Gemini Cache] Error creating cache:', error);
     return { cacheId: null, cacheName: null, isNewCache: false };
