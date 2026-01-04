@@ -399,49 +399,16 @@ export default function Home() {
           </div>
         </div>
 
-        {/* PDF Viewer with Chat Panel */}
+        {/* PDF Viewer */}
         {selectedPdf && (
-          <div 
-            className="flex gap-5 transition-all duration-500 ease-out" 
-            style={{ height: 'calc(100vh - 200px)' }}
-          >
-            {/* PDF Container - shrinks when chat is open */}
-            <div 
-              className={`bg-white rounded-lg shadow-lg overflow-hidden transition-all duration-500 ease-out ${
-                showChat ? 'flex-1' : 'w-full'
-              }`}
-            >
-              <PDFViewer
-                file={`/api/files/${selectedPdf.filepath}`}
-                filename={selectedPdf.filename}
-                onTextSelect={handleTextSelect}
-                highlights={highlights}
-                onHighlightClick={handleHighlightClick}
-              />
-            </div>
-
-            {/* Chat Panel - slides in from right */}
-            <div 
-              className={`transition-all duration-500 ease-out overflow-hidden ${
-                showChat 
-                  ? 'w-[420px] opacity-100' 
-                  : 'w-0 opacity-0'
-              }`}
-            >
-              {showChat && (
-                <ChatOverlay
-                  isOpen={showChat}
-                  onClose={() => {
-                    setShowChat(false);
-                    setSelectedText('');
-                  }}
-                  highlightedText={selectedText}
-                  conversationId={currentConversationId || undefined}
-                  initialMessages={currentMessages}
-                  onSendMessage={handleSendMessage}
-                />
-              )}
-            </div>
+          <div className="bg-white rounded-lg shadow-lg overflow-hidden" style={{ height: 'calc(100vh - 200px)' }}>
+            <PDFViewer
+              file={`/api/files/${selectedPdf.filepath}`}
+              filename={selectedPdf.filename}
+              onTextSelect={handleTextSelect}
+              highlights={highlights}
+              onHighlightClick={handleHighlightClick}
+            />
           </div>
         )}
 
@@ -454,6 +421,19 @@ export default function Home() {
             onClose={() => setShowPopup(false)}
           />
         )}
+
+        {/* Chat Overlay */}
+        <ChatOverlay
+          isOpen={showChat}
+          onClose={() => {
+            setShowChat(false);
+            setSelectedText('');
+          }}
+          highlightedText={selectedText}
+          conversationId={currentConversationId || undefined}
+          initialMessages={currentMessages}
+          onSendMessage={handleSendMessage}
+        />
         </div>
       </div>
     </main>
