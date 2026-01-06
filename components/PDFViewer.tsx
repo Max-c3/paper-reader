@@ -39,6 +39,12 @@ interface PDFViewerProps {
   onHighlightDelete?: (highlightId: string) => void;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  // Pending highlight (not yet saved) to show temporary visual overlay
+  pendingHighlight?: {
+    pageNumber: number;
+    selectionRanges: any;
+    selectedText: string;
+  } | null;
 }
 
 const PDFViewer = memo(function PDFViewer({
@@ -51,14 +57,23 @@ const PDFViewer = memo(function PDFViewer({
   onHighlightDelete,
   isFullscreen = false,
   onToggleFullscreen,
+  pendingHighlight,
 }: PDFViewerProps) {
   const [numPages, setNumPages] = useState<number>(0);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageInputValue, setPageInputValue] = useState<string>('1');
   const [selectedText, setSelectedText] = useState('');
   const [selectionRanges, setSelectionRanges] = useState<any>(null);
   const [scale, setScale] = useState<number>(1.2); // Start at 120% like papiers.ai
+  
+  // Ref for the scroll container to track current page
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
+    setCurrentPage(1);
+    setPageInputValue('1');
   };
 
   // Throttle refs for zoom operations
@@ -107,6 +122,87 @@ const PDFViewer = memo(function PDFViewer({
   // Format zoom percentage for display
   const zoomPercentage = Math.round(scale * 100);
 
+  // Track current page based on scroll position (throttled for performance)
+  useEffect(() => {
+    if (!scrollContainerRef.current || numPages === 0) return;
+
+    const container = scrollContainerRef.current;
+    let ticking = false;
+    
+    const updateCurrentPage = () => {
+      const containerRect = container.getBoundingClientRect();
+      const containerCenter = containerRect.top + containerRect.height / 2;
+      
+      let closestPage = 1;
+      let closestDistance = Infinity;
+      
+      pageRefs.current.forEach((element, pageNum) => {
+        const rect = element.getBoundingClientRect();
+        const pageCenter = rect.top + rect.height / 2;
+        const distance = Math.abs(pageCenter - containerCenter);
+        
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestPage = pageNum;
+        }
+      });
+      
+      setCurrentPage(closestPage);
+      setPageInputValue(String(closestPage));
+      ticking = false;
+    };
+
+    const onScroll = () => {
+      if (!ticking) {
+        requestAnimationFrame(updateCurrentPage);
+        ticking = true;
+      }
+    };
+
+    // Initial update after a short delay to let pages render
+    const timer = setTimeout(updateCurrentPage, 100);
+    
+    // Update on scroll
+    container.addEventListener('scroll', onScroll, { passive: true });
+    
+    return () => {
+      clearTimeout(timer);
+      container.removeEventListener('scroll', onScroll);
+    };
+  }, [numPages]);
+
+  // Handle page input change
+  const handlePageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPageInputValue(e.target.value);
+  };
+
+  // Handle page input submission (Enter key or blur)
+  const handlePageInputSubmit = () => {
+    const pageNum = parseInt(pageInputValue, 10);
+    if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= numPages) {
+      setCurrentPage(pageNum);
+      // Scroll to the page
+      const pageElement = pageRefs.current.get(pageNum);
+      if (pageElement && scrollContainerRef.current) {
+        pageElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    } else {
+      // Reset to current page if invalid
+      setPageInputValue(String(currentPage));
+    }
+  };
+
+  const handlePageInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handlePageInputSubmit();
+      (e.target as HTMLInputElement).blur();
+    } else if (e.key === 'Escape') {
+      setPageInputValue(String(currentPage));
+      (e.target as HTMLInputElement).blur();
+    }
+  };
+
   const handleTextSelection = useCallback(() => {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) {
@@ -148,22 +244,41 @@ const PDFViewer = memo(function PDFViewer({
     const selectionRect = range.getBoundingClientRect();
 
     // Get individual rects for each line of the selection
-    // Find the rect with the rightmost point to position the popup correctly
+    // This captures the precise text-following rectangles, not just the bounding box
     const clientRects = range.getClientRects();
     let rightmostRect = clientRects[0];
-    for (let i = 1; i < clientRects.length; i++) {
-      if (clientRects[i].right > rightmostRect.right) {
-        rightmostRect = clientRects[i];
+    
+    // Convert all client rects to page-relative coordinates (normalized to 100% scale)
+    // This allows us to render multiple rectangles that follow the text precisely
+    const rects: Array<{ x: number; y: number; width: number; height: number }> = [];
+    for (let i = 0; i < clientRects.length; i++) {
+      const rect = clientRects[i];
+      // Skip very small rects (artifacts)
+      if (rect.width < 1 || rect.height < 1) continue;
+      
+      rects.push({
+        x: (rect.left - pageRect.left) / scale,
+        y: (rect.top - pageRect.top) / scale,
+        width: rect.width / scale,
+        height: rect.height / scale,
+      });
+      
+      if (rect.right > rightmostRect.right) {
+        rightmostRect = rect;
       }
     }
 
     // Calculate relative coordinates (normalized to 100% scale for storage)
+    // Keep bounding box for backwards compatibility, but also store individual rects
     const ranges = {
       page: pageNum,
+      // Bounding box (legacy, for backwards compatibility)
       startX: (selectionRect.left - pageRect.left) / scale,
       startY: (selectionRect.top - pageRect.top) / scale,
       endX: (selectionRect.right - pageRect.left) / scale,
       endY: (selectionRect.bottom - pageRect.top) / scale,
+      // Individual rectangles for precise text-following highlight
+      rects: rects,
       startOffset: range.startOffset,
       endOffset: range.endOffset,
       // Viewport coordinates for popup positioning (fixed position)
@@ -280,10 +395,22 @@ const PDFViewer = memo(function PDFViewer({
             </button>
           </div>
 
-          {/* Page Count */}
-          <span className="text-sm text-gray-600">
-            {numPages > 0 ? `${numPages} pages` : ''}
-          </span>
+          {/* Page Navigation */}
+          {numPages > 0 && (
+            <div className="flex items-center gap-1 text-sm text-gray-600">
+              <input
+                type="text"
+                value={pageInputValue}
+                onChange={handlePageInputChange}
+                onBlur={handlePageInputSubmit}
+                onKeyDown={handlePageInputKeyDown}
+                className="w-10 px-1.5 py-0.5 text-center text-gray-900 bg-gray-100 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                aria-label="Current page"
+              />
+              <span className="text-gray-400">/</span>
+              <span>{numPages}</span>
+            </div>
+          )}
 
           {/* Fullscreen Toggle */}
           {onToggleFullscreen && (
@@ -332,7 +459,7 @@ const PDFViewer = memo(function PDFViewer({
       </div>
 
       {/* PDF Viewer Area - Continuous Scroll */}
-      <div className="flex-1 overflow-auto bg-gray-50">
+      <div ref={scrollContainerRef} className="flex-1 overflow-auto bg-gray-50">
         <div className="flex flex-col items-center py-8">
           <Document
             file={file}
@@ -346,6 +473,14 @@ const PDFViewer = memo(function PDFViewer({
               return (
                 <div
                   key={`page_${pageNum}`}
+                  ref={(el) => {
+                    if (el) {
+                      pageRefs.current.set(pageNum, el);
+                    } else {
+                      pageRefs.current.delete(pageNum);
+                    }
+                  }}
+                  data-page-number={pageNum}
                   className="mb-8 flex justify-center"
                   onMouseUp={handleTextSelection}
                 >
@@ -360,62 +495,193 @@ const PDFViewer = memo(function PDFViewer({
                     {/* Highlight overlays for this page */}
                     {pageHighlights.length > 0 && (
                       <div className="absolute inset-0 pointer-events-none z-10">
-                        {pageHighlights.map((highlight) => (
-                          <div
-                            key={highlight.id}
-                            className="absolute pointer-events-auto group"
-                            style={{
-                              left: `${highlight.ranges.startX * scale}px`,
-                              top: `${highlight.ranges.startY * scale}px`,
-                              width: `${Math.max(highlight.ranges.endX - highlight.ranges.startX, 10) * scale}px`,
-                              height: `${Math.max(highlight.ranges.endY - highlight.ranges.startY, 10) * scale}px`,
-                            }}
-                          >
-                            {/* Highlight background */}
-                            <div
-                              onClick={() => onHighlightClick(highlight.id)}
-                              className="absolute inset-0 cursor-pointer bg-gray-300/30 transition-all duration-200 ease-out group-hover:scale-[1.03]"
-                              style={{ 
-                                borderRadius: '3px',
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.boxShadow = '0 0 12px 4px rgba(59, 130, 246, 0.6), 0 0 24px 8px rgba(96, 165, 250, 0.4), 0 0 40px 12px rgba(59, 130, 246, 0.25), 0 0 60px 20px rgba(59, 130, 246, 0.1)';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.boxShadow = 'none';
-                              }}
-                              title="Click to reopen conversation"
-                            />
-                            {/* Delete button */}
-                            {onHighlightDelete && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onHighlightDelete(highlight.id);
-                                }}
-                                className="absolute -top-2.5 -right-2.5 w-4 h-4 bg-gray-800 hover:bg-gray-900 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-50 transition-opacity duration-150 shadow-md"
-                                title="Delete highlight"
-                              >
-                                <svg
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  className="h-2.5 w-2.5 text-white"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  stroke="currentColor"
-                                  strokeWidth={2.5}
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    d="M6 18L18 6M6 6l12 12"
+                        {pageHighlights.map((highlight) => {
+                          // Use individual rects if available, otherwise fall back to bounding box
+                          const hasRects = highlight.ranges.rects && Array.isArray(highlight.ranges.rects) && highlight.ranges.rects.length > 0;
+                          
+                          if (hasRects) {
+                            // Render multiple rectangles for precise text-following highlight
+                            return (
+                              <div key={highlight.id} className="group">
+                                {highlight.ranges.rects.map((rect: { x: number; y: number; width: number; height: number }, rectIndex: number) => (
+                                  <div
+                                    key={`${highlight.id}-rect-${rectIndex}`}
+                                    className="absolute pointer-events-auto cursor-pointer bg-gray-300/30 transition-all duration-200 ease-out group-hover:bg-blue-200/40"
+                                    style={{
+                                      left: `${rect.x * scale}px`,
+                                      top: `${rect.y * scale}px`,
+                                      width: `${Math.max(rect.width, 2) * scale}px`,
+                                      height: `${Math.max(rect.height, 2) * scale}px`,
+                                      borderRadius: '2px',
+                                    }}
+                                    onClick={() => onHighlightClick(highlight.id)}
+                                    onMouseEnter={(e) => {
+                                      // Apply dramatic glow to all rects in this highlight (matching separator style)
+                                      const glowStyle = '0 0 12px 4px rgba(59, 130, 246, 0.6), 0 0 24px 8px rgba(96, 165, 250, 0.4), 0 0 40px 12px rgba(59, 130, 246, 0.25), 0 0 60px 20px rgba(59, 130, 246, 0.1)';
+                                      const parent = e.currentTarget.parentElement;
+                                      if (parent) {
+                                        parent.querySelectorAll('[data-highlight-rect]').forEach((el) => {
+                                          (el as HTMLElement).style.boxShadow = glowStyle;
+                                        });
+                                      }
+                                      e.currentTarget.style.boxShadow = glowStyle;
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      const parent = e.currentTarget.parentElement;
+                                      if (parent) {
+                                        parent.querySelectorAll('[data-highlight-rect]').forEach((el) => {
+                                          (el as HTMLElement).style.boxShadow = 'none';
+                                        });
+                                      }
+                                      e.currentTarget.style.boxShadow = 'none';
+                                    }}
+                                    data-highlight-rect="true"
+                                    title="Click to reopen conversation"
                                   />
-                                </svg>
-                              </button>
-                            )}
-                          </div>
-                        ))}
+                                ))}
+                                {/* Delete button - positioned at top-right of first rect */}
+                                {onHighlightDelete && highlight.ranges.rects.length > 0 && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onHighlightDelete(highlight.id);
+                                    }}
+                                    className="absolute w-4 h-4 bg-gray-800 hover:bg-gray-900 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-50 transition-opacity duration-150 shadow-md pointer-events-auto"
+                                    style={{
+                                      left: `${(highlight.ranges.rects[0].x + highlight.ranges.rects[0].width) * scale - 8}px`,
+                                      top: `${highlight.ranges.rects[0].y * scale - 10}px`,
+                                    }}
+                                    title="Delete highlight"
+                                  >
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      className="h-2.5 w-2.5 text-white"
+                                      fill="none"
+                                      viewBox="0 0 24 24"
+                                      stroke="currentColor"
+                                      strokeWidth={2.5}
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        d="M6 18L18 6M6 6l12 12"
+                                      />
+                                    </svg>
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          }
+                          
+                          // Fallback: render single bounding box (for backwards compatibility with old highlights)
+                          return (
+                            <div
+                              key={highlight.id}
+                              className="absolute pointer-events-auto group"
+                              style={{
+                                left: `${highlight.ranges.startX * scale}px`,
+                                top: `${highlight.ranges.startY * scale}px`,
+                                width: `${Math.max(highlight.ranges.endX - highlight.ranges.startX, 10) * scale}px`,
+                                height: `${Math.max(highlight.ranges.endY - highlight.ranges.startY, 10) * scale}px`,
+                              }}
+                            >
+                              {/* Highlight background */}
+                              <div
+                                onClick={() => onHighlightClick(highlight.id)}
+                                className="absolute inset-0 cursor-pointer bg-gray-300/30 transition-all duration-200 ease-out group-hover:scale-[1.03]"
+                                style={{ 
+                                  borderRadius: '3px',
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.boxShadow = '0 0 12px 4px rgba(59, 130, 246, 0.6), 0 0 24px 8px rgba(96, 165, 250, 0.4), 0 0 40px 12px rgba(59, 130, 246, 0.25), 0 0 60px 20px rgba(59, 130, 246, 0.1)';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.boxShadow = 'none';
+                                }}
+                                title="Click to reopen conversation"
+                              />
+                              {/* Delete button */}
+                              {onHighlightDelete && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onHighlightDelete(highlight.id);
+                                  }}
+                                  className="absolute -top-2.5 -right-2.5 w-4 h-4 bg-gray-800 hover:bg-gray-900 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-50 transition-opacity duration-150 shadow-md"
+                                  title="Delete highlight"
+                                >
+                                  <svg
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    className="h-2.5 w-2.5 text-white"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                    strokeWidth={2.5}
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      d="M6 18L18 6M6 6l12 12"
+                                    />
+                                  </svg>
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
+                    {/* Pending highlight overlay (temporary, before saved to DB) */}
+                    {pendingHighlight && pendingHighlight.pageNumber === pageNum && pendingHighlight.selectionRanges && (() => {
+                      const ranges = pendingHighlight.selectionRanges;
+                      const hasRects = ranges.rects && Array.isArray(ranges.rects) && ranges.rects.length > 0;
+                      
+                      if (hasRects) {
+                        // Render multiple rectangles for precise text-following highlight
+                        return (
+                          <div className="absolute inset-0 pointer-events-none z-10">
+                            {ranges.rects.map((rect: { x: number; y: number; width: number; height: number }, rectIndex: number) => (
+                              <div
+                                key={`pending-rect-${rectIndex}`}
+                                className="absolute bg-blue-300/40"
+                                style={{
+                                  left: `${rect.x * scale}px`,
+                                  top: `${rect.y * scale}px`,
+                                  width: `${Math.max(rect.width, 2) * scale}px`,
+                                  height: `${Math.max(rect.height, 2) * scale}px`,
+                                  borderRadius: '2px',
+                                  boxShadow: '0 0 12px 4px rgba(59, 130, 246, 0.6), 0 0 24px 8px rgba(96, 165, 250, 0.4), 0 0 40px 12px rgba(59, 130, 246, 0.25), 0 0 60px 20px rgba(59, 130, 246, 0.1)',
+                                }}
+                              />
+                            ))}
+                          </div>
+                        );
+                      }
+                      
+                      // Fallback: render single bounding box
+                      return (
+                        <div className="absolute inset-0 pointer-events-none z-10">
+                          <div
+                            className="absolute"
+                            style={{
+                              left: `${ranges.startX * scale}px`,
+                              top: `${ranges.startY * scale}px`,
+                              width: `${Math.max(ranges.endX - ranges.startX, 10) * scale}px`,
+                              height: `${Math.max(ranges.endY - ranges.startY, 10) * scale}px`,
+                            }}
+                          >
+                            {/* Pending highlight background - dramatic glow matching separator style */}
+                            <div
+                              className="absolute inset-0 bg-blue-300/40"
+                              style={{ 
+                                borderRadius: '3px',
+                                boxShadow: '0 0 12px 4px rgba(59, 130, 246, 0.6), 0 0 24px 8px rgba(96, 165, 250, 0.4), 0 0 40px 12px rgba(59, 130, 246, 0.25), 0 0 60px 20px rgba(59, 130, 246, 0.1)',
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               );

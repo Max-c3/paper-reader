@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import SelectionPopup from '@/components/SelectionPopup';
 import ChatPanel from '@/components/ChatOverlay';
 
@@ -40,6 +41,7 @@ interface Highlight {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [pdfs, setPdfs] = useState<PDF[]>([]);
   const [selectedPdf, setSelectedPdf] = useState<PDF | null>(null);
   const [highlights, setHighlights] = useState<Highlight[]>([]);
@@ -65,10 +67,23 @@ export default function Home() {
   // Deleted highlight for undo functionality
   const [deletedHighlight, setDeletedHighlight] = useState<Highlight | null>(null);
   
+  // Focus trigger for chat input (incremented when user clicks blueberry or highlight)
+  const [chatFocusTrigger, setChatFocusTrigger] = useState(0);
+  
+  // Committed highlighted text shown in chat (only updates when blueberry/highlight is clicked)
+  const [chatHighlightedText, setChatHighlightedText] = useState('');
+  
+  // Initial prompt to auto-send when chat opens
+  const [initialPrompt, setInitialPrompt] = useState<string | null>(null);
+  
   // Split panel state
   const [splitRatio, setSplitRatio] = useState(60); // PDF takes 60% by default
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Refs for keyboard shortcuts
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const selectPdfRef = useRef<HTMLSelectElement>(null);
   
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -170,7 +185,7 @@ export default function Home() {
     }
   }, []);
 
-  const handleQueryClick = async () => {
+  const handleQueryClick = useCallback(async () => {
     if (!selectedText || !selectedPdf || !selectionRanges) return;
 
     setShowPopup(false);
@@ -189,18 +204,25 @@ export default function Home() {
       setPendingHighlight(null);
     } else {
       // Store as pending - will only save to DB when first LLM call happens
+      // Capture the EXACT selection ranges at this moment (not recalculated later)
       setPendingHighlight({
         pdfId: selectedPdf.id,
         pageNumber: selectionRanges.page,
-        selectionRanges,
+        selectionRanges: { ...selectionRanges }, // Clone to prevent any mutation
         selectedText,
       });
       setCurrentHighlightId(null);
       setCurrentConversationId(null);
     }
 
+    // Clear native browser selection - we now rely on our overlay for visual feedback
+    // This prevents the highlight from disappearing when focus changes to the chat input
+    window.getSelection()?.removeAllRanges();
+
+    setChatHighlightedText(selectedText); // Commit the highlighted text to show in chat
     setShowChat(true);
-  };
+    setChatFocusTrigger(prev => prev + 1); // Trigger focus on chat input
+  }, [selectedText, selectedPdf, selectionRanges, highlights]);
 
   const handleHighlightClick = useCallback((highlightId: string) => {
     // Instant access from preloaded data
@@ -208,9 +230,12 @@ export default function Home() {
     if (!highlight) return;
 
     setSelectedText(highlight.selectedText);
+    setChatHighlightedText(highlight.selectedText); // Commit the highlighted text to show in chat
     setCurrentHighlightId(highlightId);
     setCurrentConversationId(highlight.conversation?.id || null);
+    setPendingHighlight(null); // Clear any pending highlight when clicking an existing one
     setShowChat(true);
+    setChatFocusTrigger(prev => prev + 1); // Trigger focus on chat input
   }, [highlights]);
 
   const handleHighlightDelete = useCallback(async (highlightId: string) => {
@@ -303,6 +328,106 @@ export default function Home() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // Keyboard shortcuts: "?" (settings), "u" (upload), "s" (select PDF) - always active
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input/textarea/contenteditable
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      // "?" key: open settings
+      if (e.key === '?') {
+        e.preventDefault();
+        router.push('/settings');
+      }
+      // "u" key: click upload button
+      else if (e.key === 'u' || e.key === 'U') {
+        e.preventDefault();
+        uploadInputRef.current?.click();
+      }
+      // "s" key: click select PDF dropdown
+      else if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        // Check if select exists and has PDFs
+        if (selectPdfRef.current && pdfs.length > 0) {
+          const select = selectPdfRef.current;
+          // Scroll into view if needed
+          select.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Focus first
+          select.focus();
+          // Then click to open dropdown - use setTimeout to ensure focus completes
+          setTimeout(() => {
+            // Try multiple approaches to ensure dropdown opens
+            select.click();
+            // Also dispatch a mousedown event
+            const mouseEvent = new MouseEvent('mousedown', {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+            });
+            select.dispatchEvent(mouseEvent);
+          }, 50);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [router, pdfs.length]);
+
+  // Keyboard shortcuts for selection popup (Space and 1-5)
+  useEffect(() => {
+    if (!showPopup) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input/textarea/contenteditable
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      // Space key: open chat (same as clicking blueberry)
+      if (e.key === ' ') {
+        e.preventDefault();
+        handleQueryClick();
+      }
+      // Number keys 1-5: open chat and send configured prompt
+      else if (['1', '2', '3', '4', '5'].includes(e.key)) {
+        e.preventDefault();
+        
+        // Get prompts from localStorage
+        const stored = localStorage.getItem('shortcutPrompts');
+        if (stored) {
+          try {
+            const prompts = JSON.parse(stored);
+            const prompt = prompts[e.key];
+            
+            // Only proceed if prompt is configured
+            if (prompt && prompt.trim()) {
+              setInitialPrompt(prompt.trim());
+              handleQueryClick();
+            }
+          } catch (error) {
+            console.error('Error reading prompts:', error);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showPopup, handleQueryClick]);
 
   const handleSendMessage = async (
     message: string,
@@ -470,13 +595,40 @@ export default function Home() {
           >
             blueberry
           </span>
-          <Link
-            href="/papers"
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors text-lg"
-            style={{ fontFamily: "'American Typewriter', serif" }}
-          >
-            <span>List of Papers</span>
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/papers"
+              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors text-lg"
+              style={{ fontFamily: "'American Typewriter', serif" }}
+            >
+              <span>List of Papers</span>
+            </Link>
+            <Link
+              href="/settings"
+              className="text-gray-600 hover:text-gray-900 transition-colors"
+              title="Settings"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-5 w-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+              </svg>
+            </Link>
+          </div>
         </div>
       </div>
       {/* Glowing separator */}
@@ -519,6 +671,7 @@ export default function Home() {
             <label className="px-4 py-2 bg-blue-500 text-white rounded-lg cursor-pointer hover:bg-blue-600 transition-colors">
               {isUploading ? 'Uploading...' : 'Upload Paper'}
               <input
+                ref={uploadInputRef}
                 type="file"
                 accept=".pdf"
                 onChange={handleFileUpload}
@@ -529,6 +682,7 @@ export default function Home() {
 
             {pdfs.length > 0 && (
               <select
+                ref={selectPdfRef}
                 value={selectedPdf?.id || ''}
                 onChange={(e) => {
                   const pdf = pdfs.find((p) => p.id === e.target.value);
@@ -571,6 +725,11 @@ export default function Home() {
                 onHighlightDelete={handleHighlightDelete}
                 isFullscreen={isFullscreen}
                 onToggleFullscreen={() => setIsFullscreen(prev => !prev)}
+                pendingHighlight={pendingHighlight ? {
+                  pageNumber: pendingHighlight.pageNumber,
+                  selectionRanges: pendingHighlight.selectionRanges,
+                  selectedText: pendingHighlight.selectedText,
+                } : null}
               />
             </div>
 
@@ -604,13 +763,17 @@ export default function Home() {
                 onClose={() => {
                   setShowChat(false);
                   setSelectedText('');
+                  setInitialPrompt(null);
                   // Clear pending highlight if no LLM call was made
                   setPendingHighlight(null);
                 }}
-                highlightedText={selectedText}
+                highlightedText={chatHighlightedText}
                 conversationId={currentConversationId || undefined}
                 initialMessages={currentMessages}
                 onSendMessage={handleSendMessage}
+                focusTrigger={chatFocusTrigger}
+                initialPrompt={initialPrompt}
+                onInitialPromptSent={() => setInitialPrompt(null)}
               />
             </div>
           </div>

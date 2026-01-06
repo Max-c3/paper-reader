@@ -17,6 +17,9 @@ interface ChatOverlayProps {
   initialMessages?: Message[];
   onSendMessage: (message: string, onStreamChunk: (text: string) => void) => Promise<void>;
   onStreamingComplete?: (conversationId: string) => void;
+  focusTrigger?: number;
+  initialPrompt?: string | null;
+  onInitialPromptSent?: () => void;
 }
 
 export default function ChatOverlay({
@@ -27,20 +30,33 @@ export default function ChatOverlay({
   initialMessages = [],
   onSendMessage,
   onStreamingComplete,
+  focusTrigger,
+  initialPrompt,
+  onInitialPromptSent,
 }: ChatOverlayProps) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const prevConversationIdRef = useRef<string | undefined>(conversationId);
   const hasUnsavedMessagesRef = useRef(false);
   const messagesRef = useRef(messages);
+  const initialPromptSentRef = useRef(false);
+  const handleSendRef = useRef<((messageOverride?: string) => Promise<void>) | null>(null);
+  
+  // Scroll tracking for preventing auto-scroll when user is reading previous messages
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
+  const [showNewMessageButton, setShowNewMessageButton] = useState(false);
+  const wasStreamingRef = useRef(false);
+  const newMessageStartRef = useRef<HTMLDivElement>(null);
 
   // Keep messagesRef in sync with messages
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
 
   useEffect(() => {
     // Only reset messages if conversation ID changed (new conversation)
@@ -60,11 +76,13 @@ export default function ChatOverlay({
         setMessages(initialMessages);
         prevConversationIdRef.current = conversationId;
         hasUnsavedMessagesRef.current = false;
+        initialPromptSentRef.current = false; // Reset when conversation changes
       } else if (initialMessagesHasCompleteConversation && !isStreaming) {
         // InitialMessages has complete conversation with IDs, use it directly (no duplicates)
         setMessages(initialMessages);
         prevConversationIdRef.current = conversationId;
         hasUnsavedMessagesRef.current = false;
+        initialPromptSentRef.current = false; // Reset when conversation changes
       } else if (isStreaming && !initialMessagesHasCompleteConversation) {
         // We're streaming but initialMessages doesn't have the conversation yet
         // Keep current messages (they have the user message and streaming assistant message)
@@ -73,6 +91,7 @@ export default function ChatOverlay({
     } else if (currentMessages.length === 0 && initialMessages.length > 0 && !isStreaming) {
       // Starting fresh with initial messages
       setMessages(initialMessages);
+      initialPromptSentRef.current = false; // Reset when starting fresh
     } else if (!conversationChanged && initialMessagesHasCompleteConversation && !isStreaming) {
       // InitialMessages updated with complete conversation (all messages have IDs)
       // Use it to avoid duplicates, especially after first message is saved
@@ -84,10 +103,32 @@ export default function ChatOverlay({
 
   useEffect(() => {
     if (isOpen && inputRef.current) {
-      // Focus input when panel opens
-      setTimeout(() => inputRef.current?.focus(), 300);
+      // Focus input when panel opens or when focusTrigger changes (blueberry/highlight clicked)
+      setTimeout(() => inputRef.current?.focus(), 150);
     }
-  }, [isOpen]);
+  }, [isOpen, focusTrigger]);
+
+  // Auto-send initial prompt when chat opens
+  useEffect(() => {
+    if (isOpen && initialPrompt && initialPrompt.trim() && !isStreaming && messages.length === 0 && !initialPromptSentRef.current) {
+      // Reset the flag when initialPrompt changes
+      initialPromptSentRef.current = false;
+    }
+  }, [initialPrompt]);
+
+  useEffect(() => {
+    if (isOpen && initialPrompt && initialPrompt.trim() && !isStreaming && messages.length === 0 && !initialPromptSentRef.current) {
+      // Use a small delay to ensure the component is fully mounted and handleSend is defined
+      const timer = setTimeout(() => {
+        if (handleSendRef.current && !initialPromptSentRef.current) {
+          handleSendRef.current(initialPrompt.trim());
+          initialPromptSentRef.current = true;
+          onInitialPromptSent?.();
+        }
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, initialPrompt, isStreaming, messages.length, onInitialPromptSent]);
 
   // Handle ESC key to close panel
   useEffect(() => {
@@ -106,19 +147,67 @@ export default function ChatOverlay({
     };
   }, [isOpen, onClose]);
 
+  // Track when streaming ends to show the new message button
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (wasStreamingRef.current && !isStreaming) {
+      // Streaming just ended
+      if (isUserScrolledUp) {
+        setShowNewMessageButton(true);
+      }
+    }
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming, isUserScrolledUp]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isStreaming) return;
+  // Handle scroll events to detect if user is scrolled up
+  const handleScroll = () => {
+    if (!messagesContainerRef.current) return;
+    
+    const container = messagesContainerRef.current;
+    const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
+    
+    setIsUserScrolledUp(!isAtBottom);
+    
+    // Hide new message button when user scrolls to bottom
+    if (isAtBottom) {
+      setShowNewMessageButton(false);
+    }
+  };
 
-    const userMessage: Message = { role: 'user', content: input.trim() };
+  // Auto-scroll only when user is not scrolled up
+  useEffect(() => {
+    if (!isUserScrolledUp) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, isUserScrolledUp]);
+
+  // Scroll to the start of the new message when button is clicked
+  const handleNewMessageClick = () => {
+    // Find the last assistant message and scroll to show it from the top
+    if (messagesContainerRef.current) {
+      const container = messagesContainerRef.current;
+      const assistantMessages = container.querySelectorAll('[data-role="assistant"]');
+      const lastAssistantMessage = assistantMessages[assistantMessages.length - 1];
+      if (lastAssistantMessage) {
+        lastAssistantMessage.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+    setShowNewMessageButton(false);
+  };
+
+  const handleSend = async (messageOverride?: string) => {
+    const messageToSend = messageOverride || input.trim();
+    if (!messageToSend || isStreaming) return;
+
+    const userMessage: Message = { role: 'user', content: messageToSend };
     setMessages((prev) => [...prev, userMessage]);
-    const messageToSend = input.trim();
     setInput('');
     setIsStreaming(true);
     hasUnsavedMessagesRef.current = true;
+    
+    // Mark initial prompt as sent if this was an auto-send
+    if (messageOverride) {
+      initialPromptSentRef.current = true;
+    }
 
     // Add placeholder for streaming response
     setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
@@ -158,12 +247,49 @@ export default function ChatOverlay({
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  // Keep handleSendRef in sync with handleSend
+  useEffect(() => {
+    handleSendRef.current = handleSend;
+  });
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
+    // Shift+Enter allows new line (default textarea behavior)
   };
+
+  // Auto-adjust textarea height based on content
+  const adjustTextareaHeight = () => {
+    if (!inputRef.current) return;
+    
+    const textarea = inputRef.current;
+    const minHeight = 44; // Single line height
+    
+    // If empty, force single line
+    if (!input.trim()) {
+      textarea.style.height = `${minHeight}px`;
+      return;
+    }
+    
+    // Reset height to auto to get accurate scrollHeight
+    textarea.style.height = 'auto';
+    
+    // Calculate line height (approx 20px per line)
+    const lineHeight = 20;
+    const maxLines = 9;
+    const maxHeight = lineHeight * maxLines;
+    
+    // Set height to scrollHeight but cap at maxHeight, with minimum of single line
+    const newHeight = Math.max(minHeight, Math.min(textarea.scrollHeight, maxHeight));
+    textarea.style.height = `${newHeight}px`;
+  };
+
+  // Adjust height whenever input changes
+  useEffect(() => {
+    adjustTextareaHeight();
+  }, [input]);
 
   return (
     <div 
@@ -222,8 +348,14 @@ export default function ChatOverlay({
         </p>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto overscroll-contain px-5 py-4 space-y-4 chat-scrollbar">
+      {/* Messages wrapper */}
+      <div className="flex-1 flex flex-col relative overflow-hidden">
+        {/* Messages */}
+      <div 
+        ref={messagesContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto overscroll-contain px-5 py-4 space-y-4 chat-scrollbar relative"
+      >
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
             <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
@@ -250,6 +382,7 @@ export default function ChatOverlay({
         {messages.map((msg, idx) => (
           <div
             key={idx}
+            data-role={msg.role}
             className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
@@ -298,19 +431,46 @@ export default function ChatOverlay({
         )}
         <div ref={messagesEndRef} />
       </div>
+      </div>
+
+      {/* New message indicator button - positioned above the input */}
+      {showNewMessageButton && (
+        <div className="flex justify-center py-2">
+          <button
+            onClick={handleNewMessageClick}
+            className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center opacity-50 hover:opacity-80 transition-opacity shadow-lg"
+            aria-label="Scroll to new message"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-4 w-4 text-white"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 14l-7 7m0 0l-7-7m7 7V3"
+              />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {/* Input */}
       <div className="p-4 border-t border-slate-100 bg-white/80 backdrop-blur">
-        <div className="flex gap-3">
-          <input
+        <div className="flex gap-3 items-end">
+          <textarea
             ref={inputRef}
-            type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyPress={handleKeyPress}
+            onKeyDown={handleKeyDown}
             placeholder="Ask a question..."
-            disabled={isStreaming}
-            className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-transparent disabled:bg-slate-100 disabled:text-slate-400 transition-all placeholder:text-slate-400"
+            rows={1}
+            className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 focus:border-transparent transition-all placeholder:text-slate-400 resize-none overflow-y-auto leading-5"
+            style={{ minHeight: '44px', maxHeight: '180px' }}
           />
           <button
             onClick={handleSend}
